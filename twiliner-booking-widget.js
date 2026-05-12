@@ -11,6 +11,7 @@
      * 4. Abfahrtsorte aus API
      * 5. Ankunftsorte aus API
      * 6. Kalender Hinfahrt
+     * v8: Departure disabled before route, CHF price format, empty day placeholders, cursor cleanup
      */
 
     const CONFIG = {
@@ -203,6 +204,39 @@
       fallback: widget.querySelector('[data-booking-fallback="true"]')
     };
 
+    function injectCursorStyles() {
+      if (document.getElementById("twiliner-booking-widget-cursor-style")) return;
+
+      const style = document.createElement("style");
+      style.id = "twiliner-booking-widget-cursor-style";
+      style.textContent = `
+        [data-booking-widget="true"] .booking-form-item,
+        [data-booking-widget="true"] .booking-form-item-split {
+          cursor: default;
+        }
+
+        [data-booking-widget="true"] [data-booking-field="origin"],
+        [data-booking-widget="true"] [data-booking-field="destination"],
+        [data-booking-widget="true"] [data-booking-field="departure-date"],
+        [data-booking-widget="true"] [data-booking-field="return-date"],
+        [data-booking-widget="true"] [data-booking-passengers="minus"],
+        [data-booking-widget="true"] [data-booking-passengers="plus"],
+        [data-booking-widget="true"] [data-booking-toggle="trip-type"],
+        [data-booking-widget="true"] [data-booking-submit="true"],
+        [data-booking-widget="true"] .booking-calendar-nav,
+        [data-booking-widget="true"] .booking-calendar-day.is-available {
+          cursor: pointer;
+        }
+
+        [data-booking-widget="true"] [aria-disabled="true"],
+        [data-booking-widget="true"] .booking-calendar-day.is-disabled,
+        [data-booking-widget="true"] .booking-calendar-day.is-empty {
+          cursor: default;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
     function getCurrentLanguage() {
       const htmlLang = (document.documentElement.getAttribute("lang") || "").toLowerCase();
 
@@ -275,7 +309,7 @@
       const francs = numeric >= 1000 ? numeric / 100 : numeric;
       const rounded = Math.round(francs);
 
-      return String(rounded) + ".–";
+      return "CHF " + String(rounded);
     }
 
     function mapPlace(place) {
@@ -456,6 +490,7 @@
 
       field.style.opacity = isLoading ? "0.6" : "";
       field.style.pointerEvents = isLoading ? "none" : "";
+      field.setAttribute("aria-busy", isLoading ? "true" : "false");
     }
 
     function setFieldEnabled(field, isEnabled) {
@@ -630,6 +665,8 @@
       setLabelPlaceholder(els.departureLabel, labels.chooseDate);
       setLabelPlaceholder(els.returnLabel, labels.chooseDate);
 
+      setFieldEnabled(els.departureField, false);
+
       closePanel(els.departureOverlay, true);
       closePanel(els.returnOverlay, true);
     }
@@ -774,7 +811,10 @@
     }
 
     async function loadDepartureDates() {
-      if (!state.selectedOrigin || !state.selectedDestination) return;
+      if (!state.selectedOrigin || !state.selectedDestination) {
+        setFieldEnabled(els.departureField, false);
+        return;
+      }
 
       state.isLoadingDepartureDates = true;
       state.departureDatesLoaded = false;
@@ -826,14 +866,18 @@
         }
 
         drawCalendar("departure");
+        setFieldEnabled(els.departureField, dates.size > 0);
       } catch (error) {
         console.error("Twiliner departure dates API error:", error);
 
         showError(labels.datesApiError);
         showFallback();
+
+        setFieldEnabled(els.departureField, false);
       } finally {
         state.isLoadingDepartureDates = false;
         setFieldLoading(els.departureField, false);
+        setFieldEnabled(els.departureField, state.departureDates.size > 0);
       }
     }
 
@@ -1013,6 +1057,19 @@
       content.appendChild(grid);
     }
 
+    function createEmptyCalendarCell() {
+      const template = state.calendarTemplates.departure;
+      const empty = createElement("div", template.dayClass + " is-empty");
+
+      const dateEl = createElement("div", template.dateClass, "");
+      const priceEl = createElement("div", template.priceClass, "");
+
+      empty.appendChild(dateEl);
+      empty.appendChild(priceEl);
+
+      return empty;
+    }
+
     function buildCalendarCells(year, month) {
       const template = state.calendarTemplates.departure;
       const today = new Date();
@@ -1026,8 +1083,7 @@
       const cells = [];
 
       for (let i = 0; i < offset; i += 1) {
-        const empty = createElement("div", template.dayClass + " is-empty");
-        cells.push(empty);
+        cells.push(createEmptyCalendarCell());
       }
 
       for (let day = 1; day <= daysInMonth; day += 1) {
@@ -1090,8 +1146,7 @@
       }
 
       while (cells.length % 7 !== 0) {
-        const empty = createElement("div", template.dayClass + " is-empty");
-        cells.push(empty);
+        cells.push(createEmptyCalendarCell());
       }
 
       return cells;
@@ -1238,6 +1293,8 @@
     }
 
     function init() {
+      injectCursorStyles();
+
       preparePanel(els.originDropdown);
       preparePanel(els.destinationDropdown);
       preparePanel(els.departureOverlay);
