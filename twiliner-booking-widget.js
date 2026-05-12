@@ -12,7 +12,8 @@
      * 5. Ankunftsorte aus API
      * 6. Kalender Hinfahrt
      * 7. Kalender Rückfahrt
-     * v9: Rückfahrt-Kalender, Datum mit Jahr, Empty-States, Soft Disabled, Button-Validierung
+     * 8. Validierung Button
+     * v10: Datumsformat mit Wochentag, Outside Click Close, Button-Validierung
      */
 
     const CONFIG = {
@@ -305,17 +306,20 @@
       return new Date(String(iso) + "T00:00:00");
     }
 
+    function getWeekdayLabel(date) {
+      const day = date.getDay();
+      const mondayBasedIndex = day === 0 ? 6 : day - 1;
+      return labels.weekdays[mondayBasedIndex] || "";
+    }
+
     function formatSelectedDate(iso) {
       const date = parseIsoDate(iso);
+      const weekday = getWeekdayLabel(date);
       const day = String(date.getDate()).padStart(2, "0");
       const month = String(date.getMonth() + 1).padStart(2, "0");
-      const year = date.getFullYear();
+      const year = String(date.getFullYear()).slice(-2);
 
-      if (state.language === "en") {
-        return day + " " + labels.monthsShort[date.getMonth()] + " " + year;
-      }
-
-      return day + "." + month + "." + year;
+      return weekday + ", " + day + "." + month + "." + year;
     }
 
     function formatPriceForCalendar(price) {
@@ -1500,9 +1504,19 @@
       }
 
       document.addEventListener("click", function (event) {
-        if (!widget.contains(event.target)) {
-          closeAllPanels();
-        }
+        if (!state.openPanel) return;
+
+        const clickedInsideOpenPanel = state.openPanel.contains(event.target);
+
+        const clickedField =
+          event.target.closest('[data-booking-field="origin"]') ||
+          event.target.closest('[data-booking-field="destination"]') ||
+          event.target.closest('[data-booking-field="departure-date"]') ||
+          event.target.closest('[data-booking-field="return-date"]');
+
+        if (clickedInsideOpenPanel || clickedField) return;
+
+        closeAllPanels();
       });
 
       document.addEventListener("keydown", function (event) {
