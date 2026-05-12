@@ -131,35 +131,27 @@
       en: "en"
     };
 
-    const LEGACY_CITY_CODE_MAP = {
-      zurich: "001",
-      zuerich: "001",
-      zurigo: "001",
-      zurich HB: "001",
+const LEGACY_CITY_CODE_MAP = {
+  zurich: "001",
+  zuerich: "001",
 
-      bern: "002",
-      berne: "002",
+  bern: "002",
+  berne: "002",
 
-      basel: "012",
-      bale: "012",
+  basel: "012",
 
-      girona: "004",
+  girona: "004",
+  barcelona: "005",
+  amsterdam: "006",
+  rotterdam: "008",
 
-      barcelona: "005",
+  brussels: "009",
+  brussel: "009",
+  bruxelles: "009",
 
-      amsterdam: "006",
-
-      rotterdam: "008",
-
-      brussels: "009",
-      brussel: "009",
-      bruxelles: "009",
-      brussells: "009",
-
-      luxembourg: "010",
-      luxemburg: "010",
-      luxembourg city: "010"
-    };
+  luxembourg: "010",
+  luxemburg: "010"
+};
 
     const TURNIT_CITY_NAME_BY_LEGACY_CODE = {
       "001": "Zurich",
