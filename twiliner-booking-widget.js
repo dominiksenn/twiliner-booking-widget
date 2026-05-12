@@ -11,7 +11,8 @@
      * 4. Abfahrtsorte aus API
      * 5. Ankunftsorte aus API
      * 6. Kalender Hinfahrt
-     * v8: Departure disabled before route, CHF price format, empty day placeholders, cursor cleanup
+     * 7. Kalender Rückfahrt
+     * v9: Rückfahrt-Kalender, Datum mit Jahr, Empty-States, Soft Disabled, Button-Validierung
      */
 
     const CONFIG = {
@@ -35,6 +36,10 @@
         noDates: "Keine verfügbaren Reisedaten.",
         selectOriginFirst: "Bitte zuerst einen Abfahrtsort wählen.",
         selectDestinationFirst: "Bitte zuerst einen Ankunftsort wählen.",
+        selectRouteFirst: "Bitte zuerst Abfahrtsort und Ankunftsort wählen.",
+        selectDepartureFirst: "Bitte zuerst ein Hinfahrtsdatum wählen.",
+        selectReturnFirst: "Bitte auch ein Rückfahrtsdatum wählen.",
+        completeSelection: "Bitte vervollständige deine Auswahl.",
         originApiError: "Die Abfahrtsorte konnten nicht geladen werden.",
         destinationApiError: "Die Ankunftsorte konnten nicht geladen werden.",
         datesApiError: "Die Reisedaten konnten nicht geladen werden.",
@@ -78,6 +83,10 @@
         noDates: "No available travel dates.",
         selectOriginFirst: "Please select a departure place first.",
         selectDestinationFirst: "Please select an arrival place first.",
+        selectRouteFirst: "Please select departure and arrival first.",
+        selectDepartureFirst: "Please select an outbound date first.",
+        selectReturnFirst: "Please also select a return date.",
+        completeSelection: "Please complete your selection.",
         originApiError: "Departure places could not be loaded.",
         destinationApiError: "Arrival places could not be loaded.",
         datesApiError: "Travel dates could not be loaded.",
@@ -150,16 +159,23 @@
       departurePrices: new Map(),
       departureCheapDates: new Set(),
 
+      returnDates: new Set(),
+      returnPrices: new Map(),
+      returnCheapDates: new Set(),
+
       isLoadingOrigins: false,
       isLoadingDestinations: false,
       isLoadingDepartureDates: false,
+      isLoadingReturnDates: false,
 
       originLoaded: false,
       destinationLoaded: false,
       departureDatesLoaded: false,
+      returnDatesLoaded: false,
 
       viewDates: {
-        departure: new Date()
+        departure: new Date(),
+        return: new Date()
       },
 
       openPanel: null,
@@ -293,12 +309,13 @@
       const date = parseIsoDate(iso);
       const day = String(date.getDate()).padStart(2, "0");
       const month = String(date.getMonth() + 1).padStart(2, "0");
+      const year = date.getFullYear();
 
       if (state.language === "en") {
-        return day + " " + labels.monthsShort[date.getMonth()];
+        return day + " " + labels.monthsShort[date.getMonth()] + " " + year;
       }
 
-      return day + "." + month + ".";
+      return day + "." + month + "." + year;
     }
 
     function formatPriceForCalendar(price) {
@@ -493,12 +510,12 @@
       field.setAttribute("aria-busy", isLoading ? "true" : "false");
     }
 
-    function setFieldEnabled(field, isEnabled) {
+    function setFieldActiveStyle(field, isActive) {
       if (!field) return;
 
-      field.style.opacity = isEnabled ? "" : "0.4";
-      field.style.pointerEvents = isEnabled ? "" : "none";
-      field.setAttribute("aria-disabled", isEnabled ? "false" : "true");
+      field.style.opacity = isActive ? "" : "0.4";
+      field.style.pointerEvents = "";
+      field.setAttribute("aria-disabled", isActive ? "false" : "true");
     }
 
     function showError(message) {
@@ -581,6 +598,10 @@
           : "rgb(167, 167, 167)";
       }
 
+      if (isOneway) {
+        closePanel(els.returnOverlay, true);
+      }
+
       widget.setAttribute("data-booking-trip-type", state.tripType);
     }
 
@@ -590,9 +611,7 @@
       state.tripType = state.tripType === "roundtrip" ? "oneway" : "roundtrip";
 
       if (state.tripType === "oneway") {
-        state.selectedReturnDate = null;
-        setLabelPlaceholder(els.returnLabel, labels.chooseDate);
-        closePanel(els.returnOverlay, true);
+        resetReturnDateOnly();
       }
 
       renderTripType();
@@ -650,22 +669,42 @@
         labels.noDestinations
       );
 
-      setFieldEnabled(els.destinationField, false);
+      setFieldActiveStyle(els.destinationField, false);
       closePanel(els.destinationDropdown, true);
+    }
+
+    function resetReturnDateOnly() {
+      state.selectedReturnDate = null;
+      state.returnDates = new Set();
+      state.returnPrices = new Map();
+      state.returnCheapDates = new Set();
+      state.returnDatesLoaded = false;
+
+      setLabelPlaceholder(els.returnLabel, labels.chooseDate);
+      setFieldActiveStyle(els.returnField, false);
+      closePanel(els.returnOverlay, true);
     }
 
     function resetDates() {
       state.selectedDepartureDate = null;
       state.selectedReturnDate = null;
+
       state.departureDates = new Set();
       state.departurePrices = new Map();
       state.departureCheapDates = new Set();
+
+      state.returnDates = new Set();
+      state.returnPrices = new Map();
+      state.returnCheapDates = new Set();
+
       state.departureDatesLoaded = false;
+      state.returnDatesLoaded = false;
 
       setLabelPlaceholder(els.departureLabel, labels.chooseDate);
       setLabelPlaceholder(els.returnLabel, labels.chooseDate);
 
-      setFieldEnabled(els.departureField, false);
+      setFieldActiveStyle(els.departureField, false);
+      setFieldActiveStyle(els.returnField, false);
 
       closePanel(els.departureOverlay, true);
       closePanel(els.returnOverlay, true);
@@ -791,7 +830,7 @@
         );
 
         setLabelPlaceholder(els.destinationLabel, labels.choose);
-        setFieldEnabled(els.destinationField, state.destinationPlaces.length > 0);
+        setFieldActiveStyle(els.destinationField, state.destinationPlaces.length > 0);
       } catch (error) {
         console.error("Twiliner destination API error:", error);
 
@@ -799,32 +838,53 @@
         showFallback();
 
         setLabelPlaceholder(els.destinationLabel, labels.choose);
-        setFieldEnabled(els.destinationField, false);
+        setFieldActiveStyle(els.destinationField, false);
       } finally {
         state.isLoadingDestinations = false;
         setFieldLoading(els.destinationField, false);
 
         if (!state.destinationPlaces.length) {
-          setFieldEnabled(els.destinationField, false);
+          setFieldActiveStyle(els.destinationField, false);
         }
       }
     }
 
-    async function loadDepartureDates() {
+    async function loadConnectionDates(type) {
+      const isReturn = type === "return";
+
       if (!state.selectedOrigin || !state.selectedDestination) {
-        setFieldEnabled(els.departureField, false);
+        if (!isReturn) setFieldActiveStyle(els.departureField, false);
+        if (isReturn) setFieldActiveStyle(els.returnField, false);
         return;
       }
 
-      state.isLoadingDepartureDates = true;
-      state.departureDatesLoaded = false;
+      if (isReturn && !state.selectedDepartureDate) {
+        setFieldActiveStyle(els.returnField, false);
+        return;
+      }
 
-      setFieldLoading(els.departureField, true);
+      if (isReturn) {
+        state.isLoadingReturnDates = true;
+        state.returnDatesLoaded = false;
+        setFieldLoading(els.returnField, true);
+      } else {
+        state.isLoadingDepartureDates = true;
+        state.departureDatesLoaded = false;
+        setFieldLoading(els.departureField, true);
+      }
 
       try {
+        const departureId = isReturn
+          ? state.selectedDestination.apiId
+          : state.selectedOrigin.apiId;
+
+        const arrivalId = isReturn
+          ? state.selectedOrigin.apiId
+          : state.selectedDestination.apiId;
+
         const payload = await apiGet("get-connection-dates", {
-          place_departure_id: state.selectedOrigin.apiId,
-          place_arrival_id: state.selectedDestination.apiId,
+          place_departure_id: departureId,
+          place_arrival_id: arrivalId,
           operator_id: CONFIG.operatorId,
           currency: CONFIG.currency
         });
@@ -841,6 +901,15 @@
 
             if (price === null || price === undefined) return;
 
+            if (isReturn && state.selectedDepartureDate) {
+              const returnDate = parseIsoDate(item.date);
+              const departureDate = parseIsoDate(state.selectedDepartureDate);
+
+              if (returnDate <= departureDate) {
+                return;
+              }
+            }
+
             dates.add(item.date);
             prices.set(item.date, formatPriceForCalendar(price));
 
@@ -850,35 +919,71 @@
           });
         }
 
-        state.departureDates = dates;
-        state.departurePrices = prices;
-        state.departureCheapDates = cheapDates;
-        state.departureDatesLoaded = true;
-
         const firstAvailableDate = Array.from(dates).sort()[0];
 
-        if (firstAvailableDate) {
-          const date = parseIsoDate(firstAvailableDate);
-          state.viewDates.departure = new Date(date.getFullYear(), date.getMonth(), 1);
-        } else {
-          const today = new Date();
-          state.viewDates.departure = new Date(today.getFullYear(), today.getMonth(), 1);
-        }
+        if (isReturn) {
+          state.returnDates = dates;
+          state.returnPrices = prices;
+          state.returnCheapDates = cheapDates;
+          state.returnDatesLoaded = true;
 
-        drawCalendar("departure");
-        setFieldEnabled(els.departureField, dates.size > 0);
+          if (firstAvailableDate) {
+            const date = parseIsoDate(firstAvailableDate);
+            state.viewDates.return = new Date(date.getFullYear(), date.getMonth(), 1);
+          } else if (state.selectedDepartureDate) {
+            const date = parseIsoDate(state.selectedDepartureDate);
+            state.viewDates.return = new Date(date.getFullYear(), date.getMonth(), 1);
+          }
+
+          drawCalendar("return");
+          setFieldActiveStyle(els.returnField, dates.size > 0);
+        } else {
+          state.departureDates = dates;
+          state.departurePrices = prices;
+          state.departureCheapDates = cheapDates;
+          state.departureDatesLoaded = true;
+
+          if (firstAvailableDate) {
+            const date = parseIsoDate(firstAvailableDate);
+            state.viewDates.departure = new Date(date.getFullYear(), date.getMonth(), 1);
+          } else {
+            const today = new Date();
+            state.viewDates.departure = new Date(today.getFullYear(), today.getMonth(), 1);
+          }
+
+          drawCalendar("departure");
+          setFieldActiveStyle(els.departureField, dates.size > 0);
+        }
       } catch (error) {
-        console.error("Twiliner departure dates API error:", error);
+        console.error("Twiliner " + type + " dates API error:", error);
 
         showError(labels.datesApiError);
         showFallback();
 
-        setFieldEnabled(els.departureField, false);
+        if (isReturn) {
+          setFieldActiveStyle(els.returnField, false);
+        } else {
+          setFieldActiveStyle(els.departureField, false);
+        }
       } finally {
-        state.isLoadingDepartureDates = false;
-        setFieldLoading(els.departureField, false);
-        setFieldEnabled(els.departureField, state.departureDates.size > 0);
+        if (isReturn) {
+          state.isLoadingReturnDates = false;
+          setFieldLoading(els.returnField, false);
+          setFieldActiveStyle(els.returnField, state.returnDates.size > 0);
+        } else {
+          state.isLoadingDepartureDates = false;
+          setFieldLoading(els.departureField, false);
+          setFieldActiveStyle(els.departureField, state.departureDates.size > 0);
+        }
       }
+    }
+
+    function loadDepartureDates() {
+      return loadConnectionDates("departure");
+    }
+
+    function loadReturnDates() {
+      return loadConnectionDates("return");
     }
 
     function captureCalendarTemplate(type) {
@@ -893,8 +998,6 @@
 
         headerClass:
           calendar.querySelector(".booking-calendar-header")?.className || "booking-calendar-header",
-        navClass:
-          calendar.querySelector(".booking-calendar-nav")?.className || "booking-calendar-nav",
         prevClass:
           calendar.querySelector(".booking-calendar-prev")?.className || "booking-calendar-nav booking-calendar-prev",
         nextClass:
@@ -979,18 +1082,47 @@
       return content;
     }
 
-    function drawCalendar(type) {
-      if (type !== "departure") return;
+    function getCalendarData(type) {
+      if (type === "return") {
+        return {
+          dates: state.returnDates,
+          prices: state.returnPrices,
+          cheapDates: state.returnCheapDates,
+          selectedDate: state.selectedReturnDate,
+          viewDate: state.viewDates.return,
+          minDateIso: state.selectedDepartureDate
+        };
+      }
 
-      const calendar = els.departureCalendar;
-      const template = state.calendarTemplates.departure;
+      return {
+        dates: state.departureDates,
+        prices: state.departurePrices,
+        cheapDates: state.departureCheapDates,
+        selectedDate: state.selectedDepartureDate,
+        viewDate: state.viewDates.departure,
+        minDateIso: null
+      };
+    }
+
+    function setCalendarViewDate(type, date) {
+      if (type === "return") {
+        state.viewDates.return = date;
+      } else {
+        state.viewDates.departure = date;
+      }
+    }
+
+    function drawCalendar(type) {
+      const calendar = type === "departure" ? els.departureCalendar : els.returnCalendar;
+      const template = state.calendarTemplates[type];
 
       if (!calendar || !template) return;
 
-      const content = clearAndCreateCalendarShell("departure");
+      const content = clearAndCreateCalendarShell(type);
       if (!content) return;
 
-      const viewDate = state.viewDates.departure || new Date();
+      const data = getCalendarData(type);
+      const viewDate = data.viewDate || new Date();
       const year = viewDate.getFullYear();
       const month = viewDate.getMonth();
 
@@ -1003,8 +1135,8 @@
         event.preventDefault();
         event.stopPropagation();
 
-        state.viewDates.departure = new Date(year, month - 1, 1);
-        drawCalendar("departure");
+        setCalendarViewDate(type, new Date(year, month - 1, 1));
+        drawCalendar(type);
       });
 
       const monthWrapper = createElement("div", template.monthWrapperClass);
@@ -1022,8 +1154,8 @@
         event.preventDefault();
         event.stopPropagation();
 
-        state.viewDates.departure = new Date(year, month + 1, 1);
-        drawCalendar("departure");
+        setCalendarViewDate(type, new Date(year, month + 1, 1));
+        drawCalendar(type);
       });
 
       header.appendChild(prev);
@@ -1040,7 +1172,7 @@
 
       const grid = createElement("div", template.gridClass);
 
-      const cells = buildCalendarCells(year, month);
+      const cells = buildCalendarCells(type, year, month);
       for (let i = 0; i < cells.length; i += 7) {
         const line = createElement("div", template.lineClass);
         const rowCells = cells.slice(i, i + 7);
@@ -1057,12 +1189,12 @@
       content.appendChild(grid);
     }
 
-    function createEmptyCalendarCell() {
-      const template = state.calendarTemplates.departure;
+    function createEmptyCalendarCell(type) {
+      const template = state.calendarTemplates[type];
       const empty = createElement("div", template.dayClass + " is-empty");
 
-      const dateEl = createElement("div", template.dateClass, "");
-      const priceEl = createElement("div", template.priceClass, "");
+      const dateEl = createElement("div", template.dateClass + " is-empty", "");
+      const priceEl = createElement("div", template.priceClass + " is-empty", "");
 
       empty.appendChild(dateEl);
       empty.appendChild(priceEl);
@@ -1070,10 +1202,15 @@
       return empty;
     }
 
-    function buildCalendarCells(year, month) {
-      const template = state.calendarTemplates.departure;
+    function buildCalendarCells(type, year, month) {
+      const template = state.calendarTemplates[type];
+      const data = getCalendarData(type);
+
       const today = new Date();
       today.setHours(0, 0, 0, 0);
+
+      const minDate = data.minDateIso ? parseIsoDate(data.minDateIso) : null;
+      if (minDate) minDate.setHours(0, 0, 0, 0);
 
       const firstDay = new Date(year, month, 1);
       const firstDayIndex = firstDay.getDay();
@@ -1083,7 +1220,7 @@
       const cells = [];
 
       for (let i = 0; i < offset; i += 1) {
-        cells.push(createEmptyCalendarCell());
+        cells.push(createEmptyCalendarCell(type));
       }
 
       for (let day = 1; day <= daysInMonth; day += 1) {
@@ -1091,9 +1228,10 @@
         date.setHours(0, 0, 0, 0);
 
         const iso = formatIsoDate(date);
-        const available = state.departureDates.has(iso);
-        const selected = state.selectedDepartureDate === iso;
-        const cheap = state.departureCheapDates.has(iso);
+        const isAfterDeparture = !minDate || date > minDate;
+        const available = data.dates.has(iso) && isAfterDeparture;
+        const selected = data.selectedDate === iso;
+        const cheap = data.cheapDates.has(iso);
         const past = date < today;
 
         const dayClasses = [template.dayClass];
@@ -1124,7 +1262,7 @@
         }
 
         const dateEl = createElement("div", dateElClasses.join(" "), String(day));
-        const price = state.departurePrices.get(iso);
+        const price = data.prices.get(iso);
         const priceEl = createElement("div", priceElClasses.join(" "), price || "");
 
         dayEl.appendChild(dateEl);
@@ -1135,7 +1273,11 @@
             event.preventDefault();
             event.stopPropagation();
 
-            selectDepartureDate(iso);
+            if (type === "return") {
+              selectReturnDate(iso);
+            } else {
+              selectDepartureDate(iso);
+            }
           });
         } else {
           dayEl.disabled = true;
@@ -1146,21 +1288,34 @@
       }
 
       while (cells.length % 7 !== 0) {
-        cells.push(createEmptyCalendarCell());
+        cells.push(createEmptyCalendarCell(type));
       }
 
       return cells;
     }
 
-    function selectDepartureDate(iso) {
+    async function selectDepartureDate(iso) {
       state.selectedDepartureDate = iso;
-      state.selectedReturnDate = null;
 
       setLabelSelected(els.departureLabel, formatSelectedDate(iso));
-      setLabelPlaceholder(els.returnLabel, labels.chooseDate);
+
+      resetReturnDateOnly();
 
       drawCalendar("departure");
       closePanel(els.departureOverlay);
+
+      if (state.tripType === "roundtrip") {
+        await loadReturnDates();
+      }
+    }
+
+    function selectReturnDate(iso) {
+      state.selectedReturnDate = iso;
+
+      setLabelSelected(els.returnLabel, formatSelectedDate(iso));
+
+      drawCalendar("return");
+      closePanel(els.returnOverlay);
     }
 
     async function handleOriginClick(event) {
@@ -1229,6 +1384,65 @@
       togglePanel(els.departureOverlay);
     }
 
+    async function handleReturnDateClick(event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+
+      hideError();
+
+      if (state.tripType === "oneway") {
+        return;
+      }
+
+      if (!state.selectedOrigin || !state.selectedDestination) {
+        showError(labels.selectRouteFirst);
+        return;
+      }
+
+      if (!state.selectedDepartureDate) {
+        showError(labels.selectDepartureFirst);
+        return;
+      }
+
+      if (!state.returnDatesLoaded && !state.isLoadingReturnDates) {
+        await loadReturnDates();
+      }
+
+      if (!state.returnDates.size) {
+        showError(labels.noDates);
+        return;
+      }
+
+      drawCalendar("return");
+      togglePanel(els.returnOverlay);
+    }
+
+    function validateSelection() {
+      if (!state.selectedOrigin || !state.selectedDestination || !state.selectedDepartureDate) {
+        showError(labels.completeSelection);
+        return false;
+      }
+
+      if (state.tripType === "roundtrip" && !state.selectedReturnDate) {
+        showError(labels.selectReturnFirst);
+        return false;
+      }
+
+      hideError();
+      return true;
+    }
+
+    function handleSubmit(event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+
+      validateSelection();
+    }
+
     function bindEvents() {
       if (els.passengerMinus) {
         els.passengerMinus.addEventListener("click", decreasePassengers);
@@ -1245,18 +1459,22 @@
       if (els.toggleRoundtripLabel) {
         els.toggleRoundtripLabel.addEventListener("click", function (event) {
           event.preventDefault();
+
           state.tripType = "roundtrip";
           renderTripType();
+
+          if (state.selectedDepartureDate && !state.returnDatesLoaded) {
+            loadReturnDates();
+          }
         });
       }
 
       if (els.toggleOnewayLabel) {
         els.toggleOnewayLabel.addEventListener("click", function (event) {
           event.preventDefault();
+
           state.tripType = "oneway";
-          state.selectedReturnDate = null;
-          setLabelPlaceholder(els.returnLabel, labels.chooseDate);
-          closePanel(els.returnOverlay, true);
+          resetReturnDateOnly();
           renderTripType();
         });
       }
@@ -1273,10 +1491,12 @@
         els.departureField.addEventListener("click", handleDepartureDateClick);
       }
 
+      if (els.returnField) {
+        els.returnField.addEventListener("click", handleReturnDateClick);
+      }
+
       if (els.submit) {
-        els.submit.addEventListener("click", function (event) {
-          event.preventDefault();
-        });
+        els.submit.addEventListener("click", handleSubmit);
       }
 
       document.addEventListener("click", function (event) {
@@ -1335,7 +1555,9 @@
         loadDeparturePlaces,
         loadDestinationPlaces,
         loadDepartureDates,
-        drawCalendar
+        loadReturnDates,
+        drawCalendar,
+        validateSelection
       };
     }
 
