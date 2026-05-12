@@ -15,7 +15,7 @@
      * 8. Validierung Button
      * 9. Turnit Link
      * 10. URL Parameter & Fallback
-     * v11: Turnit Redirect, spezifische Validierung, Rückfahrt optional, URL-Parameter persistieren
+     * v12: Turnit-kompatible City Payloads fuer lokalisierte Orte wie Brüssel / Bruxelles -> Brussels
      */
 
     const CONFIG = {
@@ -134,15 +134,43 @@
     const LEGACY_CITY_CODE_MAP = {
       zurich: "001",
       zuerich: "001",
+      zurigo: "001",
+      zurich HB: "001",
+
       bern: "002",
       berne: "002",
+
       basel: "012",
+      bale: "012",
+
       girona: "004",
+
       barcelona: "005",
+
       amsterdam: "006",
+
       rotterdam: "008",
+
       brussels: "009",
-      luxembourg: "010"
+      brussel: "009",
+      bruxelles: "009",
+      brussells: "009",
+
+      luxembourg: "010",
+      luxemburg: "010",
+      luxembourg city: "010"
+    };
+
+    const TURNIT_CITY_NAME_BY_LEGACY_CODE = {
+      "001": "Zurich",
+      "002": "Bern",
+      "012": "Basel",
+      "004": "Girona",
+      "005": "Barcelona",
+      "006": "Amsterdam",
+      "008": "Rotterdam",
+      "009": "Brussels",
+      "010": "Luxembourg"
     };
 
     const TURNIT_PROTECTED_PARAMS = new Set([
@@ -432,28 +460,53 @@
       }
     }
 
-    function mapPlace(place) {
-      const cleanedLabel = stripTrailingCountryCode(place.label);
+    function getLegacyCodeForPlace(place, cleanedLabel) {
       const lookupKeys = [
         normalizeLookupKey(cleanedLabel),
+        normalizeLookupKey(place.label),
         normalizeLookupKey(place.name),
+        normalizeLookupKey(place.name_de),
+        normalizeLookupKey(place.name_en),
+        normalizeLookupKey(place.name_fr),
         normalizeLookupKey(place.key)
       ].filter(Boolean);
 
-      let legacyCode = null;
-
       for (let i = 0; i < lookupKeys.length; i += 1) {
         if (LEGACY_CITY_CODE_MAP[lookupKeys[i]]) {
-          legacyCode = LEGACY_CITY_CODE_MAP[lookupKeys[i]];
-          break;
+          return LEGACY_CITY_CODE_MAP[lookupKeys[i]];
         }
       }
+
+      return null;
+    }
+
+    function getTurnitCityName(place, cleanedLabel, legacyCode) {
+      if (legacyCode && TURNIT_CITY_NAME_BY_LEGACY_CODE[legacyCode]) {
+        return TURNIT_CITY_NAME_BY_LEGACY_CODE[legacyCode];
+      }
+
+      return (
+        place.name_en ||
+        place.key ||
+        place.name ||
+        cleanedLabel ||
+        place.label ||
+        ""
+      );
+    }
+
+    function mapPlace(place) {
+      const cleanedLabel = stripTrailingCountryCode(place.label);
+      const legacyCode = getLegacyCodeForPlace(place, cleanedLabel);
+      const turnitCityName = getTurnitCityName(place, cleanedLabel, legacyCode);
 
       return {
         value: legacyCode || place.id,
         apiId: place.id,
         label: cleanedLabel || place.label || place.name || "",
         cityName: place.name || cleanedLabel || place.label || "",
+        turnitLabel: turnitCityName,
+        turnitCityName: turnitCityName,
         raw: place
       };
     }
@@ -1577,14 +1630,14 @@
 
       const originPayload = {
         value: state.selectedOrigin.value,
-        label: state.selectedOrigin.label,
-        cityName: state.selectedOrigin.cityName
+        label: state.selectedOrigin.turnitLabel || state.selectedOrigin.label,
+        cityName: state.selectedOrigin.turnitCityName || state.selectedOrigin.cityName
       };
 
       const destinationPayload = {
         value: state.selectedDestination.value,
-        label: state.selectedDestination.label,
-        cityName: state.selectedDestination.cityName
+        label: state.selectedDestination.turnitLabel || state.selectedDestination.label,
+        cityName: state.selectedDestination.turnitCityName || state.selectedDestination.cityName
       };
 
       const params = new URLSearchParams({
