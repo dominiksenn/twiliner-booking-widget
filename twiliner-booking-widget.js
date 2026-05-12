@@ -13,7 +13,9 @@
      * 6. Kalender Hinfahrt
      * 7. Kalender Rückfahrt
      * 8. Validierung Button
-     * v10: Datumsformat mit Wochentag, Outside Click Close, Button-Validierung
+     * 9. Turnit Link
+     * 10. URL Parameter & Fallback
+     * v11: Turnit Redirect, spezifische Validierung, Rückfahrt optional, URL-Parameter persistieren
      */
 
     const CONFIG = {
@@ -24,7 +26,9 @@
       minPassengers: 1,
       maxPassengers: 9,
       panelTransitionMs: 300,
-      selectedTextColor: "#46288c"
+      selectedTextColor: "#46288c",
+      trackingStorageKey: "twiliner_booking_url_params",
+      openInNewTab: false
     };
 
     const TEXT = {
@@ -35,15 +39,14 @@
         noDepartures: "Keine Abfahrtsorte verfügbar",
         noDestinations: "Keine Ankunftsorte verfügbar",
         noDates: "Keine verfügbaren Reisedaten.",
-        selectOriginFirst: "Bitte zuerst einen Abfahrtsort wählen.",
-        selectDestinationFirst: "Bitte zuerst einen Ankunftsort wählen.",
-        selectRouteFirst: "Bitte zuerst Abfahrtsort und Ankunftsort wählen.",
-        selectDepartureFirst: "Bitte zuerst ein Hinfahrtsdatum wählen.",
-        selectReturnFirst: "Bitte auch ein Rückfahrtsdatum wählen.",
-        completeSelection: "Bitte vervollständige deine Auswahl.",
+        selectOriginFirst: "Bitte wähle einen Abfahrtsort.",
+        selectDestinationFirst: "Bitte wähle einen Ankunftsort.",
+        selectRouteFirst: "Bitte wähle zuerst Abfahrtsort und Ankunftsort.",
+        selectDepartureFirst: "Bitte wähle ein Datum für die Hinfahrt.",
         originApiError: "Die Abfahrtsorte konnten nicht geladen werden.",
         destinationApiError: "Die Ankunftsorte konnten nicht geladen werden.",
         datesApiError: "Die Reisedaten konnten nicht geladen werden.",
+        bookingLinkError: "Der Buchungslink konnte nicht erstellt werden.",
         directBooking: "Direkt im Buchungstool buchen",
         months: [
           "Januar",
@@ -82,15 +85,14 @@
         noDepartures: "No departure places available",
         noDestinations: "No arrival places available",
         noDates: "No available travel dates.",
-        selectOriginFirst: "Please select a departure place first.",
-        selectDestinationFirst: "Please select an arrival place first.",
+        selectOriginFirst: "Please select a departure place.",
+        selectDestinationFirst: "Please select an arrival place.",
         selectRouteFirst: "Please select departure and arrival first.",
-        selectDepartureFirst: "Please select an outbound date first.",
-        selectReturnFirst: "Please also select a return date.",
-        completeSelection: "Please complete your selection.",
+        selectDepartureFirst: "Please select a date for the outbound trip.",
         originApiError: "Departure places could not be loaded.",
         destinationApiError: "Arrival places could not be loaded.",
         datesApiError: "Travel dates could not be loaded.",
+        bookingLinkError: "The booking link could not be created.",
         directBooking: "Open booking tool directly",
         months: [
           "January",
@@ -142,6 +144,15 @@
       brussels: "009",
       luxembourg: "010"
     };
+
+    const TURNIT_PROTECTED_PARAMS = new Set([
+      "origin",
+      "destination",
+      "departureDate",
+      "returnDate",
+      "passengers",
+      "productType"
+    ]);
 
     const state = {
       language: getCurrentLanguage(),
@@ -254,6 +265,76 @@
       document.head.appendChild(style);
     }
 
+    function captureUrlParamsForLater() {
+      try {
+        const current = new URLSearchParams(window.location.search || "");
+        if (!Array.from(current.keys()).length) return;
+
+        const stored = readStoredUrlParams();
+        const merged = new Map();
+
+        stored.forEach(function (item) {
+          if (!item || !item.key) return;
+          merged.set(item.key, item.value || "");
+        });
+
+        current.forEach(function (value, key) {
+          if (!key || value === "") return;
+          merged.set(key, value);
+        });
+
+        const payload = Array.from(merged.entries()).map(function (entry) {
+          return {
+            key: entry[0],
+            value: entry[1]
+          };
+        });
+
+        sessionStorage.setItem(CONFIG.trackingStorageKey, JSON.stringify(payload));
+      } catch (_) {
+        // Tracking parameters are helpful, but must never break booking.
+      }
+    }
+
+    function readStoredUrlParams() {
+      try {
+        const raw = sessionStorage.getItem(CONFIG.trackingStorageKey);
+        if (!raw) return [];
+
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (_) {
+        return [];
+      }
+    }
+
+    function appendTrackingParams(targetParams) {
+      const merged = new Map();
+
+      readStoredUrlParams().forEach(function (item) {
+        if (!item || !item.key) return;
+        if (TURNIT_PROTECTED_PARAMS.has(item.key)) return;
+        merged.set(item.key, item.value || "");
+      });
+
+      try {
+        const current = new URLSearchParams(window.location.search || "");
+        current.forEach(function (value, key) {
+          if (!key || value === "") return;
+          if (TURNIT_PROTECTED_PARAMS.has(key)) return;
+          merged.set(key, value);
+        });
+      } catch (_) {
+        // Ignore URL parsing issues.
+      }
+
+      merged.forEach(function (value, key) {
+        if (!targetParams.has(key)) {
+          targetParams.append(key, value);
+        }
+      });
+    }
+
     function getCurrentLanguage() {
       const htmlLang = (document.documentElement.getAttribute("lang") || "").toLowerCase();
 
@@ -331,6 +412,24 @@
       const rounded = Math.round(francs);
 
       return "CHF " + String(rounded);
+    }
+
+    function createUUID() {
+      try {
+        return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, function (c) {
+          return (
+            c ^
+            (crypto.getRandomValues(new Uint8Array(1))[0] & 15) >>
+              (c / 4)
+          ).toString(16);
+        });
+      } catch (_) {
+        return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+          const r = Math.random() * 16 | 0;
+          const v = c === "x" ? r : (r & 0x3 | 0x8);
+          return v.toString(16);
+        });
+      }
     }
 
     function mapPlace(place) {
@@ -535,12 +634,25 @@
       els.error.style.display = "none";
     }
 
+    function buildFallbackUrl() {
+      try {
+        const url = new URL(CONFIG.bookingBaseUrl);
+        const params = new URLSearchParams();
+        appendTrackingParams(params);
+
+        const query = params.toString();
+        return query ? url.toString().replace(/\?$/, "") + "?" + query : url.toString();
+      } catch (_) {
+        return CONFIG.bookingBaseUrl;
+      }
+    }
+
     function showFallback() {
       if (!els.fallback) return;
 
       els.fallback.textContent = labels.directBooking;
       els.fallback.style.display = "inline-block";
-      els.fallback.setAttribute("href", CONFIG.bookingBaseUrl);
+      els.fallback.setAttribute("href", buildFallbackUrl());
     }
 
     function hideFallback() {
@@ -1424,18 +1536,72 @@
     }
 
     function validateSelection() {
-      if (!state.selectedOrigin || !state.selectedDestination || !state.selectedDepartureDate) {
-        showError(labels.completeSelection);
+      if (!state.selectedOrigin) {
+        showError(labels.selectOriginFirst);
         return false;
       }
 
-      if (state.tripType === "roundtrip" && !state.selectedReturnDate) {
-        showError(labels.selectReturnFirst);
+      if (!state.selectedDestination) {
+        showError(labels.selectDestinationFirst);
+        return false;
+      }
+
+      if (!state.selectedDepartureDate) {
+        showError(labels.selectDepartureFirst);
         return false;
       }
 
       hideError();
       return true;
+    }
+
+    function buildPassengersPayload() {
+      const passengers = [];
+
+      for (let i = 0; i < state.passengers; i += 1) {
+        passengers.push({
+          externalReference: createUUID(),
+          type: "PERSON",
+          isAdult: true,
+          passengerTypeId: 1,
+          ageFrom: 0,
+          ageTo: 120
+        });
+      }
+
+      return passengers;
+    }
+
+    function buildTurnitUrl() {
+      if (!validateSelection()) return null;
+
+      const originPayload = {
+        value: state.selectedOrigin.value,
+        label: state.selectedOrigin.label,
+        cityName: state.selectedOrigin.cityName
+      };
+
+      const destinationPayload = {
+        value: state.selectedDestination.value,
+        label: state.selectedDestination.label,
+        cityName: state.selectedDestination.cityName
+      };
+
+      const params = new URLSearchParams({
+        origin: JSON.stringify(originPayload),
+        destination: JSON.stringify(destinationPayload),
+        departureDate: state.selectedDepartureDate + "T00:00:00",
+        passengers: JSON.stringify(buildPassengersPayload()),
+        productType: "ticket"
+      });
+
+      if (state.selectedReturnDate) {
+        params.append("returnDate", state.selectedReturnDate + "T00:00:00");
+      }
+
+      appendTrackingParams(params);
+
+      return CONFIG.bookingBaseUrl.replace(/\/?$/, "/") + "?" + params.toString();
     }
 
     function handleSubmit(event) {
@@ -1444,7 +1610,21 @@
         event.stopPropagation();
       }
 
-      validateSelection();
+      const url = buildTurnitUrl();
+
+      if (!url) return;
+
+      try {
+        if (CONFIG.openInNewTab) {
+          window.open(url, "_blank", "noopener");
+        } else {
+          window.location.href = url;
+        }
+      } catch (error) {
+        console.error("Twiliner booking link error:", error);
+        showError(labels.bookingLinkError);
+        showFallback();
+      }
     }
 
     function bindEvents() {
@@ -1527,6 +1707,7 @@
     }
 
     function init() {
+      captureUrlParamsForLater();
       injectCursorStyles();
 
       preparePanel(els.originDropdown);
@@ -1571,7 +1752,10 @@
         loadDepartureDates,
         loadReturnDates,
         drawCalendar,
-        validateSelection
+        validateSelection,
+        buildTurnitUrl,
+        buildFallbackUrl,
+        readStoredUrlParams
       };
     }
 
