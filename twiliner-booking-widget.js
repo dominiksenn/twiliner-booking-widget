@@ -2120,13 +2120,13 @@
 
 /* ==========================================================================
    Twiliner Hero Route Selector
-   v16 / H4: Hero Origin Dropup
+   v17 / H5: Hero Origin + Destination Dropups
    - Lädt Abfahrtsorte via API
-   - Öffnet das Hero-Dropup animiert nach oben
+   - Lädt Ankunftsorte abhängig vom gewählten Abfahrtsort via API
+   - Öffnet Hero-Dropups animiert von unten nach oben
    - Schreibt Optionen in .dropup-list-content
    - Übernimmt Webflow-Klassen vom bestehenden Beispielitem
-   - Speichert selectedOrigin
-   - Aktiviert danach das Ankunftsort-Feld
+   - Speichert selectedOrigin und selectedDestination
    ========================================================================== */
 
 (function () {
@@ -2146,12 +2146,16 @@
       de: {
         choose: "Bitte wählen",
         loading: "Wird geladen...",
-        noDepartures: "Keine Abfahrtsorte verfügbar"
+        noDepartures: "Keine Abfahrtsorte verfügbar",
+        noDestinations: "Keine Ankunftsorte verfügbar",
+        selectOriginFirst: "Bitte wähle zuerst einen Abfahrtsort."
       },
       en: {
         choose: "Please select",
         loading: "Loading...",
-        noDepartures: "No departure places available"
+        noDepartures: "No departure places available",
+        noDestinations: "No arrival places available",
+        selectOriginFirst: "Please select a departure place first."
       }
     };
 
@@ -2431,7 +2435,7 @@
 
       panel.style.display = "none";
       panel.style.opacity = "0";
-      panel.style.transform = "translateY(-0.5rem)";
+      panel.style.transform = "translateY(0.5rem)";
       panel.style.transition =
         "opacity " + CONFIG.panelTransitionMs + "ms ease-in-out, transform " + CONFIG.panelTransitionMs + "ms ease-in-out";
       panel.style.pointerEvents = "none";
@@ -2464,14 +2468,14 @@
 
       if (instant) {
         panel.style.opacity = "0";
-        panel.style.transform = "translateY(-0.5rem)";
+        panel.style.transform = "translateY(0.5rem)";
         panel.style.pointerEvents = "none";
         panel.style.display = "none";
         return;
       }
 
       panel.style.opacity = "0";
-      panel.style.transform = "translateY(-0.5rem)";
+      panel.style.transform = "translateY(0.5rem)";
       panel.style.pointerEvents = "none";
 
       window.setTimeout(function () {
@@ -2526,6 +2530,19 @@
       field.style.opacity = isLoading ? "0.6" : "";
       field.style.pointerEvents = isLoading ? "none" : "";
       field.setAttribute("aria-busy", isLoading ? "true" : "false");
+    }
+
+    function showHeroError(message) {
+      if (!els.error) return;
+
+      els.error.textContent = message;
+      els.error.style.display = "block";
+    }
+
+    function hideHeroError() {
+      if (!els.error) return;
+
+      els.error.style.display = "none";
     }
 
     function renderHeroOptions(panel, options, onSelect, emptyText, type) {
@@ -2589,6 +2606,16 @@
       closePanel(els.originDropdown);
 
       resetDestinationForHero();
+      hideHeroError();
+    }
+
+    function setDestination(destination) {
+      heroState.selectedDestination = destination;
+
+      setLabelSelected(els.destinationLabel, destination.label);
+      closePanel(els.destinationDropdown);
+
+      hideHeroError();
     }
 
     async function loadOriginPlaces() {
@@ -2645,16 +2672,103 @@
       }
     }
 
+    async function loadDestinationPlaces() {
+      if (heroState.apiUnavailable) return;
+
+      if (!heroState.selectedOrigin) {
+        setFieldActiveStyle(els.destinationField, false);
+        showHeroError(labels.selectOriginFirst);
+        return;
+      }
+
+      if (heroState.isLoadingDestinations || heroState.destinationLoaded) return;
+
+      heroState.isLoadingDestinations = true;
+
+      setFieldLoading(els.destinationField, true);
+
+      if (!heroState.selectedDestination) {
+        setLabelPlaceholder(els.destinationLabel, labels.loading);
+      }
+
+      try {
+        const apiLanguage = API_LANGUAGE_MAP[heroState.language] || "de";
+
+        const payload = await apiGet("get-places", {
+          type: "arrival",
+          language: apiLanguage,
+          operator_id: CONFIG.operatorId,
+          place_departure_id: heroState.selectedOrigin.apiId
+        }, "hero-destination-places");
+
+        const places = Array.isArray(payload)
+          ? payload.map(mapPlace).filter(function (place) {
+              return Boolean(place.label && place.apiId);
+            })
+          : [];
+
+        heroState.destinationPlaces = sortPlacesAlphabetically(places);
+        heroState.destinationLoaded = true;
+
+        renderHeroOptions(
+          els.destinationDropdown,
+          heroState.destinationPlaces,
+          setDestination,
+          labels.noDestinations,
+          "destination"
+        );
+
+        if (!heroState.selectedDestination) {
+          setLabelPlaceholder(els.destinationLabel, labels.choose);
+        }
+
+        setFieldActiveStyle(els.destinationField, heroState.destinationPlaces.length > 0);
+      } catch (error) {
+        console.error("Twiliner hero destination API error:", error);
+
+        heroState.apiUnavailable = true;
+        heroState.fallbackReason = error;
+
+        setLabelPlaceholder(els.destinationLabel, labels.choose);
+      } finally {
+        heroState.isLoadingDestinations = false;
+        setFieldLoading(els.destinationField, false);
+      }
+    }
+
     async function handleOriginClick(event) {
       if (event) {
         event.preventDefault();
         event.stopPropagation();
       }
 
+      hideHeroError();
+
       await loadOriginPlaces();
 
       if (heroState.originLoaded) {
         togglePanel(els.originDropdown);
+      }
+    }
+
+    async function handleDestinationClick(event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+
+      hideHeroError();
+
+      if (!heroState.selectedOrigin) {
+        setFieldActiveStyle(els.destinationField, false);
+        showHeroError(labels.selectOriginFirst);
+        return;
+      }
+
+      await loadDestinationPlaces();
+
+      if (heroState.destinationLoaded) {
+        togglePanel(els.destinationDropdown);
       }
     }
 
@@ -2690,6 +2804,10 @@
         els.originField.addEventListener("click", handleOriginClick);
       }
 
+      if (els.destinationField) {
+        els.destinationField.addEventListener("click", handleDestinationClick);
+      }
+
       document.addEventListener("click", function (event) {
         if (!heroState.openPanel) return;
 
@@ -2715,6 +2833,7 @@
       preparePanel(els.destinationDropdown);
 
       setFieldActiveStyle(els.destinationField, false);
+      hideHeroError();
 
       bindEvents();
 
