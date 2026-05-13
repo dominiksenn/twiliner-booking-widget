@@ -15,7 +15,7 @@
      * 8. Validierung Button
      * 9. Turnit Link
      * 10. URL Parameter & Fallback
-     * v14: Fallback Cursor Fix
+     * v15: Return Field Re-Activation + Turnit Language Parameter
      */
 
     const CONFIG = {
@@ -175,7 +175,8 @@
       "departureDate",
       "returnDate",
       "passengers",
-      "productType"
+      "productType",
+      "language"
     ]);
 
     const state = {
@@ -800,6 +801,8 @@
       try {
         const url = new URL(CONFIG.bookingBaseUrl);
         const params = new URLSearchParams();
+
+        params.set("language", state.language);
         appendTrackingParams(params);
 
         const query = params.toString();
@@ -893,6 +896,25 @@
       renderPassengers();
     }
 
+    function ensureReturnFieldReadyAfterRoundtrip() {
+      if (state.apiUnavailable) return;
+      if (state.tripType !== "roundtrip") return;
+
+      if (!state.selectedOrigin || !state.selectedDestination || !state.selectedDepartureDate) {
+        setFieldActiveStyle(els.returnField, false);
+        return;
+      }
+
+      if (state.returnDatesLoaded) {
+        setFieldActiveStyle(els.returnField, state.returnDates.size > 0);
+        return;
+      }
+
+      if (!state.isLoadingReturnDates) {
+        loadReturnDates();
+      }
+    }
+
     function renderTripType() {
       const isOneway = state.tripType === "oneway";
 
@@ -930,6 +952,10 @@
       }
 
       renderTripType();
+
+      if (state.tripType === "roundtrip") {
+        ensureReturnFieldReadyAfterRoundtrip();
+      }
     }
 
     function renderDropdownOptions(panel, options, onSelect, emptyText) {
@@ -1815,6 +1841,7 @@
       };
 
       const params = new URLSearchParams({
+        language: state.language,
         origin: JSON.stringify(originPayload),
         destination: JSON.stringify(destinationPayload),
         departureDate: state.selectedDepartureDate + "T00:00:00",
@@ -1888,6 +1915,7 @@
         valid: true,
         apiUnavailable: state.apiUnavailable,
         fallbackReason: state.fallbackReason,
+        language: params.get("language"),
         origin: origin,
         destination: destination,
         departureDate: params.get("departureDate"),
@@ -1962,10 +1990,7 @@
 
           state.tripType = "roundtrip";
           renderTripType();
-
-          if (state.selectedDepartureDate && !state.returnDatesLoaded) {
-            loadReturnDates();
-          }
+          ensureReturnFieldReadyAfterRoundtrip();
         });
       }
 
