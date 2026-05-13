@@ -15,7 +15,7 @@
      * 8. Validierung Button
      * 9. Turnit Link
      * 10. URL Parameter & Fallback
-     * v12: Turnit-kompatible City Payloads fuer lokalisierte Orte wie Brüssel / Bruxelles -> Brussels
+     * v13: Fallback Mode, Debug Helpers, is-cheap auf calendar-price
      */
 
     const CONFIG = {
@@ -26,6 +26,7 @@
       minPassengers: 1,
       maxPassengers: 9,
       panelTransitionMs: 300,
+      apiTimeoutMs: 10000,
       selectedTextColor: "#46288c",
       trackingStorageKey: "twiliner_booking_url_params",
       openInNewTab: false
@@ -46,6 +47,7 @@
         originApiError: "Die Abfahrtsorte konnten nicht geladen werden.",
         destinationApiError: "Die Ankunftsorte konnten nicht geladen werden.",
         datesApiError: "Die Reisedaten konnten nicht geladen werden.",
+        fallbackMessage: "Das Buchungswidget ist momentan nicht verfügbar. Bitte nutze direkt das Buchungstool.",
         bookingLinkError: "Der Buchungslink konnte nicht erstellt werden.",
         directBooking: "Direkt im Buchungstool buchen",
         months: [
@@ -92,6 +94,7 @@
         originApiError: "Departure places could not be loaded.",
         destinationApiError: "Arrival places could not be loaded.",
         datesApiError: "Travel dates could not be loaded.",
+        fallbackMessage: "The booking widget is currently unavailable. Please use the booking tool directly.",
         bookingLinkError: "The booking link could not be created.",
         directBooking: "Open booking tool directly",
         months: [
@@ -131,27 +134,28 @@
       en: "en"
     };
 
-const LEGACY_CITY_CODE_MAP = {
-  zurich: "001",
-  zuerich: "001",
+    const LEGACY_CITY_CODE_MAP = {
+      zurich: "001",
+      zuerich: "001",
+      zurigo: "001",
 
-  bern: "002",
-  berne: "002",
+      bern: "002",
+      berne: "002",
 
-  basel: "012",
+      basel: "012",
 
-  girona: "004",
-  barcelona: "005",
-  amsterdam: "006",
-  rotterdam: "008",
+      girona: "004",
+      barcelona: "005",
+      amsterdam: "006",
+      rotterdam: "008",
 
-  brussels: "009",
-  brussel: "009",
-  bruxelles: "009",
+      brussels: "009",
+      brussel: "009",
+      bruxelles: "009",
 
-  luxembourg: "010",
-  luxemburg: "010"
-};
+      luxembourg: "010",
+      luxemburg: "010"
+    };
 
     const TURNIT_CITY_NAME_BY_LEGACY_CODE = {
       "001": "Zurich",
@@ -205,6 +209,10 @@ const LEGACY_CITY_CODE_MAP = {
       departureDatesLoaded: false,
       returnDatesLoaded: false,
 
+      apiUnavailable: false,
+      fallbackReason: null,
+      simulateApiFailureStage: null,
+
       viewDates: {
         departure: new Date(),
         return: new Date()
@@ -228,6 +236,7 @@ const LEGACY_CITY_CODE_MAP = {
       passengerMinus: widget.querySelector('[data-booking-passengers="minus"]'),
       passengerValue: widget.querySelector('[data-booking-passengers="value"]'),
       passengerPlus: widget.querySelector('[data-booking-passengers="plus"]'),
+      passengersWrapper: widget.querySelector('[data-booking-passengers-wrapper="true"]'),
 
       originField: widget.querySelector('[data-booking-field="origin"]'),
       originLabel: widget.querySelector('[data-booking-label="origin"]'),
@@ -280,6 +289,10 @@ const LEGACY_CITY_CODE_MAP = {
         [data-booking-widget="true"] .booking-calendar-day.is-disabled,
         [data-booking-widget="true"] .booking-calendar-day.is-empty {
           cursor: default;
+        }
+
+        [data-booking-widget="true"][data-booking-api-unavailable="true"] [data-booking-submit="true"] {
+          cursor: pointer;
         }
       `;
       document.head.appendChild(style);
@@ -353,6 +366,18 @@ const LEGACY_CITY_CODE_MAP = {
           targetParams.append(key, value);
         }
       });
+    }
+
+    function getTrackingParamsObject() {
+      const params = new URLSearchParams();
+      appendTrackingParams(params);
+
+      const result = {};
+      params.forEach(function (value, key) {
+        result[key] = value;
+      });
+
+      return result;
     }
 
     function getCurrentLanguage() {
@@ -511,7 +536,18 @@ const LEGACY_CITY_CODE_MAP = {
       });
     }
 
-    async function apiGet(path, query) {
+    function makeApiError(stage, message, url, status, originalError) {
+      return {
+        stage: stage || "unknown",
+        message: message || "Unknown API error",
+        url: url || null,
+        status: status || null,
+        timestamp: new Date().toISOString(),
+        originalErrorName: originalError && originalError.name ? originalError.name : null
+      };
+    }
+
+    async function apiGet(path, query, stage) {
       const url = new URL(
         CONFIG.apiBaseUrl.replace(/\/$/, "") + "/" + path.replace(/^\//, "")
       );
@@ -524,13 +560,29 @@ const LEGACY_CITY_CODE_MAP = {
         }
       });
 
+      const urlString = url.toString();
+
+      if (
+        state.simulateApiFailureStage === "any" ||
+        state.simulateApiFailureStage === stage
+      ) {
+        state.simulateApiFailureStage = null;
+        throw makeApiError(
+          stage,
+          "Simulated API failure",
+          urlString,
+          null,
+          { name: "SimulatedFailure" }
+        );
+      }
+
       const controller = new AbortController();
       const timeout = window.setTimeout(function () {
         controller.abort();
-      }, 10000);
+      }, CONFIG.apiTimeoutMs);
 
       try {
-        const response = await fetch(url.toString(), {
+        const response = await fetch(urlString, {
           method: "GET",
           headers: {
             Accept: "application/json"
@@ -539,10 +591,43 @@ const LEGACY_CITY_CODE_MAP = {
         });
 
         if (!response.ok) {
-          throw new Error("HTTP " + response.status);
+          let message = "HTTP " + response.status;
+
+          try {
+            const payload = await response.json();
+            if (payload && payload.message) {
+              message = payload.message + " (HTTP " + response.status + ")";
+            }
+          } catch (_) {
+            // Keep default HTTP message.
+          }
+
+          throw makeApiError(stage, message, urlString, response.status, null);
         }
 
         return await response.json();
+      } catch (error) {
+        if (error && error.stage && error.message && error.url) {
+          throw error;
+        }
+
+        if (error && error.name === "AbortError") {
+          throw makeApiError(
+            stage,
+            "API timeout after " + (CONFIG.apiTimeoutMs / 1000) + "s",
+            urlString,
+            null,
+            error
+          );
+        }
+
+        throw makeApiError(
+          stage,
+          error && error.message ? error.message : "Network/API error",
+          urlString,
+          null,
+          error
+        );
       } finally {
         window.clearTimeout(timeout);
       }
@@ -580,7 +665,7 @@ const LEGACY_CITY_CODE_MAP = {
     }
 
     function openPanel(panel) {
-      if (!panel) return;
+      if (!panel || state.apiUnavailable) return;
 
       if (state.openPanel && state.openPanel !== panel) {
         closePanel(state.openPanel, true);
@@ -624,7 +709,7 @@ const LEGACY_CITY_CODE_MAP = {
     }
 
     function togglePanel(panel) {
-      if (!panel) return;
+      if (!panel || state.apiUnavailable) return;
 
       const isOpen = state.openPanel === panel && panel.style.display !== "none";
 
@@ -651,7 +736,7 @@ const LEGACY_CITY_CODE_MAP = {
     }
 
     function setFieldLoading(field, isLoading) {
-      if (!field) return;
+      if (!field || state.apiUnavailable) return;
 
       field.style.opacity = isLoading ? "0.6" : "";
       field.style.pointerEvents = isLoading ? "none" : "";
@@ -661,9 +746,24 @@ const LEGACY_CITY_CODE_MAP = {
     function setFieldActiveStyle(field, isActive) {
       if (!field) return;
 
+      if (state.apiUnavailable) {
+        field.style.opacity = "0.4";
+        field.style.pointerEvents = "none";
+        field.setAttribute("aria-disabled", "true");
+        return;
+      }
+
       field.style.opacity = isActive ? "" : "0.4";
       field.style.pointerEvents = "";
       field.setAttribute("aria-disabled", isActive ? "false" : "true");
+    }
+
+    function hardDisable(el) {
+      if (!el) return;
+
+      el.style.opacity = "0.4";
+      el.style.pointerEvents = "none";
+      el.setAttribute("aria-disabled", "true");
     }
 
     function showError(message) {
@@ -706,6 +806,40 @@ const LEGACY_CITY_CODE_MAP = {
       els.fallback.style.display = "none";
     }
 
+    function activateFallbackMode(reason) {
+      const fallbackReason = reason && typeof reason === "object"
+        ? reason
+        : makeApiError("unknown", String(reason || labels.fallbackMessage), null, null, null);
+
+      state.apiUnavailable = true;
+      state.fallbackReason = fallbackReason;
+
+      widget.setAttribute("data-booking-api-unavailable", "true");
+
+      closeAllPanels();
+
+      hardDisable(els.originField);
+      hardDisable(els.destinationField);
+      hardDisable(els.departureField);
+      hardDisable(els.returnField);
+      hardDisable(els.toggle);
+      hardDisable(els.toggleGroup);
+      hardDisable(els.passengerMinus);
+      hardDisable(els.passengerPlus);
+      hardDisable(els.passengersWrapper);
+
+      if (els.submit) {
+        els.submit.style.opacity = "";
+        els.submit.style.pointerEvents = "";
+        els.submit.setAttribute("aria-disabled", "false");
+      }
+
+      showError(labels.fallbackMessage);
+      showFallback();
+
+      console.warn("Twiliner fallback mode activated:", fallbackReason);
+    }
+
     function renderPassengers() {
       if (!els.passengerValue) return;
 
@@ -724,6 +858,7 @@ const LEGACY_CITY_CODE_MAP = {
 
     function increasePassengers(event) {
       if (event) event.preventDefault();
+      if (state.apiUnavailable) return;
 
       if (state.passengers >= CONFIG.maxPassengers) return;
 
@@ -733,6 +868,7 @@ const LEGACY_CITY_CODE_MAP = {
 
     function decreasePassengers(event) {
       if (event) event.preventDefault();
+      if (state.apiUnavailable) return;
 
       if (state.passengers <= CONFIG.minPassengers) return;
 
@@ -768,6 +904,7 @@ const LEGACY_CITY_CODE_MAP = {
 
     function toggleTripType(event) {
       if (event) event.preventDefault();
+      if (state.apiUnavailable) return;
 
       state.tripType = state.tripType === "roundtrip" ? "oneway" : "roundtrip";
 
@@ -803,12 +940,14 @@ const LEGACY_CITY_CODE_MAP = {
         item.addEventListener("click", function (event) {
           event.preventDefault();
           event.stopPropagation();
+          if (state.apiUnavailable) return;
           onSelect(option);
         });
 
         item.addEventListener("keydown", function (event) {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
+            if (state.apiUnavailable) return;
             onSelect(option);
           }
         });
@@ -872,6 +1011,8 @@ const LEGACY_CITY_CODE_MAP = {
     }
 
     async function setOrigin(origin) {
+      if (state.apiUnavailable) return;
+
       state.selectedOrigin = origin;
 
       setLabelSelected(els.originLabel, origin.label);
@@ -886,6 +1027,8 @@ const LEGACY_CITY_CODE_MAP = {
     }
 
     async function setDestination(destination) {
+      if (state.apiUnavailable) return;
+
       state.selectedDestination = destination;
 
       setLabelSelected(els.destinationLabel, destination.label);
@@ -899,6 +1042,7 @@ const LEGACY_CITY_CODE_MAP = {
     }
 
     async function loadDeparturePlaces() {
+      if (state.apiUnavailable) return;
       if (state.isLoadingOrigins || state.originLoaded) return;
 
       state.isLoadingOrigins = true;
@@ -916,7 +1060,7 @@ const LEGACY_CITY_CODE_MAP = {
           type: "departure",
           language: apiLanguage,
           operator_id: CONFIG.operatorId
-        });
+        }, "departure-places");
 
         const places = Array.isArray(payload)
           ? payload.map(mapPlace).filter(function (place) {
@@ -940,12 +1084,8 @@ const LEGACY_CITY_CODE_MAP = {
       } catch (error) {
         console.error("Twiliner origin API error:", error);
 
-        showError(labels.originApiError);
-        showFallback();
-
-        if (!state.selectedOrigin) {
-          setLabelPlaceholder(els.originLabel, labels.choose);
-        }
+        setLabelPlaceholder(els.originLabel, labels.choose);
+        activateFallbackMode(error);
       } finally {
         state.isLoadingOrigins = false;
         setFieldLoading(els.originField, false);
@@ -953,6 +1093,8 @@ const LEGACY_CITY_CODE_MAP = {
     }
 
     async function loadDestinationPlaces() {
+      if (state.apiUnavailable) return;
+
       if (!state.selectedOrigin) {
         resetDestination();
         return;
@@ -972,7 +1114,7 @@ const LEGACY_CITY_CODE_MAP = {
           language: apiLanguage,
           operator_id: CONFIG.operatorId,
           place_departure_id: state.selectedOrigin.apiId
-        });
+        }, "destination-places");
 
         const places = Array.isArray(payload)
           ? payload.map(mapPlace).filter(function (place) {
@@ -995,22 +1137,21 @@ const LEGACY_CITY_CODE_MAP = {
       } catch (error) {
         console.error("Twiliner destination API error:", error);
 
-        showError(labels.destinationApiError);
-        showFallback();
-
         setLabelPlaceholder(els.destinationLabel, labels.choose);
-        setFieldActiveStyle(els.destinationField, false);
+        activateFallbackMode(error);
       } finally {
         state.isLoadingDestinations = false;
         setFieldLoading(els.destinationField, false);
 
-        if (!state.destinationPlaces.length) {
+        if (!state.destinationPlaces.length && !state.apiUnavailable) {
           setFieldActiveStyle(els.destinationField, false);
         }
       }
     }
 
     async function loadConnectionDates(type) {
+      if (state.apiUnavailable) return;
+
       const isReturn = type === "return";
 
       if (!state.selectedOrigin || !state.selectedDestination) {
@@ -1048,7 +1189,7 @@ const LEGACY_CITY_CODE_MAP = {
           place_arrival_id: arrivalId,
           operator_id: CONFIG.operatorId,
           currency: CONFIG.currency
-        });
+        }, isReturn ? "return-dates" : "departure-dates");
 
         const dates = new Set();
         const prices = new Map();
@@ -1117,24 +1258,22 @@ const LEGACY_CITY_CODE_MAP = {
         }
       } catch (error) {
         console.error("Twiliner " + type + " dates API error:", error);
-
-        showError(labels.datesApiError);
-        showFallback();
-
-        if (isReturn) {
-          setFieldActiveStyle(els.returnField, false);
-        } else {
-          setFieldActiveStyle(els.departureField, false);
-        }
+        activateFallbackMode(error);
       } finally {
         if (isReturn) {
           state.isLoadingReturnDates = false;
           setFieldLoading(els.returnField, false);
-          setFieldActiveStyle(els.returnField, state.returnDates.size > 0);
+
+          if (!state.apiUnavailable) {
+            setFieldActiveStyle(els.returnField, state.returnDates.size > 0);
+          }
         } else {
           state.isLoadingDepartureDates = false;
           setFieldLoading(els.departureField, false);
-          setFieldActiveStyle(els.departureField, state.departureDates.size > 0);
+
+          if (!state.apiUnavailable) {
+            setFieldActiveStyle(els.departureField, state.departureDates.size > 0);
+          }
         }
       }
     }
@@ -1422,6 +1561,10 @@ const LEGACY_CITY_CODE_MAP = {
           priceElClasses.push("is-disabled");
         }
 
+        if (cheap) {
+          priceElClasses.push("is-cheap");
+        }
+
         const dateEl = createElement("div", dateElClasses.join(" "), String(day));
         const price = data.prices.get(iso);
         const priceEl = createElement("div", priceElClasses.join(" "), price || "");
@@ -1433,6 +1576,8 @@ const LEGACY_CITY_CODE_MAP = {
           dayEl.addEventListener("click", function (event) {
             event.preventDefault();
             event.stopPropagation();
+
+            if (state.apiUnavailable) return;
 
             if (type === "return") {
               selectReturnDate(iso);
@@ -1456,6 +1601,8 @@ const LEGACY_CITY_CODE_MAP = {
     }
 
     async function selectDepartureDate(iso) {
+      if (state.apiUnavailable) return;
+
       state.selectedDepartureDate = iso;
 
       setLabelSelected(els.departureLabel, formatSelectedDate(iso));
@@ -1471,6 +1618,8 @@ const LEGACY_CITY_CODE_MAP = {
     }
 
     function selectReturnDate(iso) {
+      if (state.apiUnavailable) return;
+
       state.selectedReturnDate = iso;
 
       setLabelSelected(els.returnLabel, formatSelectedDate(iso));
@@ -1484,6 +1633,8 @@ const LEGACY_CITY_CODE_MAP = {
         event.preventDefault();
         event.stopPropagation();
       }
+
+      if (state.apiUnavailable) return;
 
       hideError();
 
@@ -1499,6 +1650,8 @@ const LEGACY_CITY_CODE_MAP = {
         event.preventDefault();
         event.stopPropagation();
       }
+
+      if (state.apiUnavailable) return;
 
       hideError();
 
@@ -1519,6 +1672,8 @@ const LEGACY_CITY_CODE_MAP = {
         event.preventDefault();
         event.stopPropagation();
       }
+
+      if (state.apiUnavailable) return;
 
       hideError();
 
@@ -1551,6 +1706,8 @@ const LEGACY_CITY_CODE_MAP = {
         event.stopPropagation();
       }
 
+      if (state.apiUnavailable) return;
+
       hideError();
 
       if (state.tripType === "oneway") {
@@ -1581,6 +1738,10 @@ const LEGACY_CITY_CODE_MAP = {
     }
 
     function validateSelection() {
+      if (state.apiUnavailable) {
+        return true;
+      }
+
       if (!state.selectedOrigin) {
         showError(labels.selectOriginFirst);
         return false;
@@ -1618,6 +1779,10 @@ const LEGACY_CITY_CODE_MAP = {
     }
 
     function buildTurnitUrl() {
+      if (state.apiUnavailable) {
+        return buildFallbackUrl();
+      }
+
       if (!validateSelection()) return null;
 
       const originPayload = {
@@ -1655,7 +1820,7 @@ const LEGACY_CITY_CODE_MAP = {
         event.stopPropagation();
       }
 
-      const url = buildTurnitUrl();
+      const url = state.apiUnavailable ? buildFallbackUrl() : buildTurnitUrl();
 
       if (!url) return;
 
@@ -1670,6 +1835,93 @@ const LEGACY_CITY_CODE_MAP = {
         showError(labels.bookingLinkError);
         showFallback();
       }
+    }
+
+    function inspectTurnitPayload() {
+      const url = buildTurnitUrl();
+
+      if (!url) {
+        return {
+          valid: false,
+          apiUnavailable: state.apiUnavailable,
+          fallbackReason: state.fallbackReason,
+          url: null
+        };
+      }
+
+      const params = new URL(url).searchParams;
+
+      let origin = null;
+      let destination = null;
+      let passengers = [];
+
+      try {
+        origin = params.get("origin") ? JSON.parse(params.get("origin")) : null;
+      } catch (_) {}
+
+      try {
+        destination = params.get("destination") ? JSON.parse(params.get("destination")) : null;
+      } catch (_) {}
+
+      try {
+        passengers = params.get("passengers") ? JSON.parse(params.get("passengers")) : [];
+      } catch (_) {}
+
+      return {
+        valid: true,
+        apiUnavailable: state.apiUnavailable,
+        fallbackReason: state.fallbackReason,
+        origin: origin,
+        destination: destination,
+        departureDate: params.get("departureDate"),
+        returnDate: params.get("returnDate"),
+        passengers: Array.isArray(passengers) ? passengers.length : null,
+        productType: params.get("productType"),
+        trackingParams: getTrackingParamsObject(),
+        url: url
+      };
+    }
+
+    function getStatus() {
+      return {
+        apiUnavailable: state.apiUnavailable,
+        fallbackReason: state.fallbackReason,
+        language: state.language,
+        tripType: state.tripType,
+        passengers: state.passengers,
+        selectedOrigin: state.selectedOrigin,
+        selectedDestination: state.selectedDestination,
+        selectedDepartureDate: state.selectedDepartureDate,
+        selectedReturnDate: state.selectedReturnDate,
+        originLoaded: state.originLoaded,
+        destinationLoaded: state.destinationLoaded,
+        departureDatesLoaded: state.departureDatesLoaded,
+        returnDatesLoaded: state.returnDatesLoaded,
+        departureDatesCount: state.departureDates.size,
+        returnDatesCount: state.returnDates.size,
+        storedUrlParams: readStoredUrlParams()
+      };
+    }
+
+    function simulateFallback() {
+      activateFallbackMode(makeApiError(
+        "manual-test",
+        "Manually triggered fallback test",
+        null,
+        null,
+        { name: "ManualTest" }
+      ));
+
+      return getStatus();
+    }
+
+    function simulateApiFailureOnce(stage) {
+      state.simulateApiFailureStage = stage || "any";
+
+      return {
+        message: "The next matching API call will fail once.",
+        stage: state.simulateApiFailureStage
+      };
     }
 
     function bindEvents() {
@@ -1689,6 +1941,8 @@ const LEGACY_CITY_CODE_MAP = {
         els.toggleRoundtripLabel.addEventListener("click", function (event) {
           event.preventDefault();
 
+          if (state.apiUnavailable) return;
+
           state.tripType = "roundtrip";
           renderTripType();
 
@@ -1701,6 +1955,8 @@ const LEGACY_CITY_CODE_MAP = {
       if (els.toggleOnewayLabel) {
         els.toggleOnewayLabel.addEventListener("click", function (event) {
           event.preventDefault();
+
+          if (state.apiUnavailable) return;
 
           state.tripType = "oneway";
           resetReturnDateOnly();
@@ -1800,7 +2056,12 @@ const LEGACY_CITY_CODE_MAP = {
         validateSelection,
         buildTurnitUrl,
         buildFallbackUrl,
-        readStoredUrlParams
+        readStoredUrlParams,
+        inspectTurnitPayload,
+        getStatus,
+        simulateFallback,
+        simulateApiFailureOnce,
+        activateFallbackMode
       };
     }
 
