@@ -3,20 +3,20 @@
     const widget = document.querySelector('[data-booking-widget="true"]');
     if (!widget) return;
 
-    /**
-     * Twiliner Booking Widget
-     * 1. DOM Attribute
-     * 2. Passagier Stepper
-     * 3. Toggle Hin & Zurück
-     * 4. Abfahrtsorte aus API
-     * 5. Ankunftsorte aus API
-     * 6. Kalender Hinfahrt
-     * 7. Kalender Rückfahrt
-     * 8. Validierung Button
-     * 9. Turnit Link
-     * 10. URL Parameter & Fallback
-     * v15: Return Field Re-Activation + Turnit Language Parameter
-     */
+/**
+ * Twiliner Booking Widget
+ * 1. DOM Attribute
+ * 2. Passagier Stepper
+ * 3. Toggle Hin & Zurück
+ * 4. Abfahrtsorte aus API
+ * 5. Ankunftsorte aus API
+ * 6. Kalender Hinfahrt
+ * 7. Kalender Rückfahrt
+ * 8. Validierung Button
+ * 9. Turnit Link
+ * 10. URL Parameter & Fallback
+ * v16: Hero Route Selector H4 - Origin Dropup Add-on
+ */
 
     const CONFIG = {
       apiBaseUrl: "https://data.nightride.com/api",
@@ -2114,5 +2114,626 @@
     document.addEventListener("DOMContentLoaded", initTwilinerBookingWidget);
   } else {
     initTwilinerBookingWidget();
+  }
+})();
+
+
+/* ==========================================================================
+   Twiliner Hero Route Selector
+   v16 / H4: Hero Origin Dropup
+   - Lädt Abfahrtsorte via API
+   - Öffnet das Hero-Dropup animiert nach oben
+   - Schreibt Optionen in .dropup-list-content
+   - Übernimmt Webflow-Klassen vom bestehenden Beispielitem
+   - Speichert selectedOrigin
+   - Aktiviert danach das Ankunftsort-Feld
+   ========================================================================== */
+
+(function () {
+  function initTwilinerHeroRouteSelector() {
+    const hero = document.querySelector('[data-booking-hero="true"]');
+    if (!hero) return;
+
+    const CONFIG = {
+      apiBaseUrl: "https://data.nightride.com/api",
+      operatorId: "a0cf1341-a01b-449d-b91f-17a1b4f84c44",
+      apiTimeoutMs: 10000,
+      panelTransitionMs: 300,
+      selectedTextColor: "#46288c"
+    };
+
+    const TEXT = {
+      de: {
+        choose: "Bitte wählen",
+        loading: "Wird geladen...",
+        noDepartures: "Keine Abfahrtsorte verfügbar"
+      },
+      en: {
+        choose: "Please select",
+        loading: "Loading...",
+        noDepartures: "No departure places available"
+      }
+    };
+
+    const API_LANGUAGE_MAP = {
+      de: "de",
+      en: "en"
+    };
+
+    const LEGACY_CITY_CODE_MAP = {
+      zurich: "001",
+      zuerich: "001",
+      zurigo: "001",
+
+      bern: "002",
+      berne: "002",
+
+      basel: "012",
+
+      girona: "004",
+      barcelona: "005",
+      amsterdam: "006",
+      rotterdam: "008",
+
+      brussels: "009",
+      brussel: "009",
+      bruxelles: "009",
+
+      luxembourg: "010",
+      luxemburg: "010"
+    };
+
+    const TURNIT_CITY_NAME_BY_LEGACY_CODE = {
+      "001": "Zurich",
+      "002": "Bern",
+      "012": "Basel",
+      "004": "Girona",
+      "005": "Barcelona",
+      "006": "Amsterdam",
+      "008": "Rotterdam",
+      "009": "Brussels",
+      "010": "Luxembourg"
+    };
+
+    const heroState = {
+      language: getCurrentLanguage(),
+
+      selectedOrigin: null,
+      selectedDestination: null,
+
+      originPlaces: [],
+      destinationPlaces: [],
+
+      originLoaded: false,
+      destinationLoaded: false,
+
+      isLoadingOrigins: false,
+      isLoadingDestinations: false,
+
+      apiUnavailable: false,
+      fallbackReason: null,
+
+      openPanel: null,
+
+      itemClasses: {
+        origin: null,
+        destination: null
+      }
+    };
+
+    const labels = TEXT[heroState.language] || TEXT.de;
+
+    const els = {
+      originField: hero.querySelector('[data-booking-hero-field="origin"]'),
+      originLabel: hero.querySelector('[data-booking-hero-label="origin"]'),
+      originDropdown: hero.querySelector('[data-booking-hero-dropdown="origin"]'),
+
+      destinationField: hero.querySelector('[data-booking-hero-field="destination"]'),
+      destinationLabel: hero.querySelector('[data-booking-hero-label="destination"]'),
+      destinationDropdown: hero.querySelector('[data-booking-hero-dropdown="destination"]'),
+
+      submit: hero.querySelector('[data-booking-hero-submit="true"]'),
+      error: hero.querySelector('[data-booking-hero-error="true"]')
+    };
+
+    function getCurrentLanguage() {
+      const htmlLang = (document.documentElement.getAttribute("lang") || "").toLowerCase();
+
+      if (htmlLang.startsWith("en")) return "en";
+      if (htmlLang.startsWith("de")) return "de";
+
+      const path = window.location.pathname.toLowerCase();
+
+      if (path === "/en" || path.startsWith("/en/")) return "en";
+
+      return "de";
+    }
+
+    function normalizeLookupKey(input) {
+      return String(input || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+    }
+
+    function stripTrailingCountryCode(label) {
+      return String(label || "").replace(/\s*\([A-Z]{2}\)\s*$/, "");
+    }
+
+    function getLegacyCodeForPlace(place, cleanedLabel) {
+      const lookupKeys = [
+        normalizeLookupKey(cleanedLabel),
+        normalizeLookupKey(place.label),
+        normalizeLookupKey(place.name),
+        normalizeLookupKey(place.name_de),
+        normalizeLookupKey(place.name_en),
+        normalizeLookupKey(place.name_fr),
+        normalizeLookupKey(place.key)
+      ].filter(Boolean);
+
+      for (let i = 0; i < lookupKeys.length; i += 1) {
+        if (LEGACY_CITY_CODE_MAP[lookupKeys[i]]) {
+          return LEGACY_CITY_CODE_MAP[lookupKeys[i]];
+        }
+      }
+
+      return null;
+    }
+
+    function getTurnitCityName(place, cleanedLabel, legacyCode) {
+      if (legacyCode && TURNIT_CITY_NAME_BY_LEGACY_CODE[legacyCode]) {
+        return TURNIT_CITY_NAME_BY_LEGACY_CODE[legacyCode];
+      }
+
+      return (
+        place.name_en ||
+        place.key ||
+        place.name ||
+        cleanedLabel ||
+        place.label ||
+        ""
+      );
+    }
+
+    function mapPlace(place) {
+      const cleanedLabel = stripTrailingCountryCode(place.label);
+      const legacyCode = getLegacyCodeForPlace(place, cleanedLabel);
+      const turnitCityName = getTurnitCityName(place, cleanedLabel, legacyCode);
+
+      return {
+        value: legacyCode || place.id,
+        apiId: place.id,
+        label: cleanedLabel || place.label || place.name || "",
+        cityName: place.name || cleanedLabel || place.label || "",
+        turnitLabel: turnitCityName,
+        turnitCityName: turnitCityName,
+        raw: place
+      };
+    }
+
+    function sortPlacesAlphabetically(places) {
+      return places.slice().sort(function (a, b) {
+        return String(a.label || "").localeCompare(String(b.label || ""), heroState.language, {
+          sensitivity: "base"
+        });
+      });
+    }
+
+    function makeApiError(stage, message, url, status, originalError) {
+      return {
+        stage: stage || "unknown",
+        message: message || "Unknown API error",
+        url: url || null,
+        status: status || null,
+        timestamp: new Date().toISOString(),
+        originalErrorName: originalError && originalError.name ? originalError.name : null
+      };
+    }
+
+    async function apiGet(path, query, stage) {
+      const url = new URL(
+        CONFIG.apiBaseUrl.replace(/\/$/, "") + "/" + path.replace(/^\//, "")
+      );
+
+      Object.keys(query || {}).forEach(function (key) {
+        const value = query[key];
+
+        if (value !== null && value !== undefined && value !== "") {
+          url.searchParams.set(key, value);
+        }
+      });
+
+      const urlString = url.toString();
+
+      const controller = new AbortController();
+      const timeout = window.setTimeout(function () {
+        controller.abort();
+      }, CONFIG.apiTimeoutMs);
+
+      try {
+        const response = await fetch(urlString, {
+          method: "GET",
+          headers: {
+            Accept: "application/json"
+          },
+          signal: controller.signal
+        });
+
+        if (!response.ok) {
+          let message = "HTTP " + response.status;
+
+          try {
+            const payload = await response.json();
+            if (payload && payload.message) {
+              message = payload.message + " (HTTP " + response.status + ")";
+            }
+          } catch (_) {
+            // Keep default HTTP message.
+          }
+
+          throw makeApiError(stage, message, urlString, response.status, null);
+        }
+
+        return await response.json();
+      } catch (error) {
+        if (error && error.stage && error.message && error.url) {
+          throw error;
+        }
+
+        if (error && error.name === "AbortError") {
+          throw makeApiError(
+            stage,
+            "API timeout after " + (CONFIG.apiTimeoutMs / 1000) + "s",
+            urlString,
+            null,
+            error
+          );
+        }
+
+        throw makeApiError(
+          stage,
+          error && error.message ? error.message : "Network/API error",
+          urlString,
+          null,
+          error
+        );
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    }
+
+    function getPanelContent(panel) {
+      if (!panel) return null;
+
+      return (
+        panel.querySelector(".dropup-list-content") ||
+        panel.querySelector(".dropdown-list-content") ||
+        panel.querySelector(".dropdown-list-item") ||
+        panel
+      );
+    }
+
+    function getTemplateItemClass(panel) {
+      const templateItem = panel?.querySelector(".dropdown-item");
+
+      return templateItem?.className || "dropdown-item";
+    }
+
+    function captureTemplateClasses() {
+      heroState.itemClasses.origin = getTemplateItemClass(els.originDropdown);
+      heroState.itemClasses.destination = getTemplateItemClass(els.destinationDropdown);
+    }
+
+    function preparePanel(panel) {
+      if (!panel) return;
+
+      panel.style.display = "none";
+      panel.style.opacity = "0";
+      panel.style.transform = "translateY(-0.5rem)";
+      panel.style.transition =
+        "opacity " + CONFIG.panelTransitionMs + "ms ease-in-out, transform " + CONFIG.panelTransitionMs + "ms ease-in-out";
+      panel.style.pointerEvents = "none";
+    }
+
+    function openPanel(panel) {
+      if (!panel || heroState.apiUnavailable) return;
+
+      if (heroState.openPanel && heroState.openPanel !== panel) {
+        closePanel(heroState.openPanel, true);
+      }
+
+      heroState.openPanel = panel;
+
+      panel.style.display = "block";
+      panel.style.pointerEvents = "auto";
+
+      window.requestAnimationFrame(function () {
+        panel.style.opacity = "1";
+        panel.style.transform = "translateY(0)";
+      });
+    }
+
+    function closePanel(panel, instant) {
+      if (!panel) return;
+
+      if (heroState.openPanel === panel) {
+        heroState.openPanel = null;
+      }
+
+      if (instant) {
+        panel.style.opacity = "0";
+        panel.style.transform = "translateY(-0.5rem)";
+        panel.style.pointerEvents = "none";
+        panel.style.display = "none";
+        return;
+      }
+
+      panel.style.opacity = "0";
+      panel.style.transform = "translateY(-0.5rem)";
+      panel.style.pointerEvents = "none";
+
+      window.setTimeout(function () {
+        if (heroState.openPanel !== panel) {
+          panel.style.display = "none";
+        }
+      }, CONFIG.panelTransitionMs);
+    }
+
+    function togglePanel(panel) {
+      if (!panel || heroState.apiUnavailable) return;
+
+      const isOpen = heroState.openPanel === panel && panel.style.display !== "none";
+
+      if (isOpen) {
+        closePanel(panel);
+      } else {
+        openPanel(panel);
+      }
+    }
+
+    function closeAllPanels() {
+      closePanel(els.originDropdown);
+      closePanel(els.destinationDropdown);
+    }
+
+    function setLabelPlaceholder(labelEl, text) {
+      if (!labelEl) return;
+
+      labelEl.textContent = text;
+      labelEl.style.color = "";
+    }
+
+    function setLabelSelected(labelEl, text) {
+      if (!labelEl) return;
+
+      labelEl.textContent = text;
+      labelEl.style.color = CONFIG.selectedTextColor;
+    }
+
+    function setFieldActiveStyle(field, isActive) {
+      if (!field) return;
+
+      field.style.opacity = isActive ? "" : "0.4";
+      field.style.pointerEvents = isActive ? "" : "none";
+      field.setAttribute("aria-disabled", isActive ? "false" : "true");
+    }
+
+    function setFieldLoading(field, isLoading) {
+      if (!field) return;
+
+      field.style.opacity = isLoading ? "0.6" : "";
+      field.style.pointerEvents = isLoading ? "none" : "";
+      field.setAttribute("aria-busy", isLoading ? "true" : "false");
+    }
+
+    function renderHeroOptions(panel, options, onSelect, emptyText, type) {
+      const content = getPanelContent(panel);
+      if (!content) return;
+
+      const itemClass =
+        type === "origin"
+          ? heroState.itemClasses.origin || "dropdown-item"
+          : heroState.itemClasses.destination || "dropdown-item";
+
+      content.innerHTML = "";
+
+      if (!options.length) {
+        const emptyItem = document.createElement("div");
+        emptyItem.className = itemClass;
+        emptyItem.textContent = emptyText;
+        emptyItem.style.cursor = "default";
+        content.appendChild(emptyItem);
+        return;
+      }
+
+      options.forEach(function (option) {
+        const item = document.createElement("div");
+        item.className = itemClass;
+        item.textContent = option.label;
+        item.setAttribute("role", "option");
+        item.setAttribute("tabindex", "0");
+
+        item.addEventListener("click", function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          onSelect(option);
+        });
+
+        item.addEventListener("keydown", function (event) {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onSelect(option);
+          }
+        });
+
+        content.appendChild(item);
+      });
+    }
+
+    function resetDestinationForHero() {
+      heroState.selectedDestination = null;
+      heroState.destinationPlaces = [];
+      heroState.destinationLoaded = false;
+
+      setLabelPlaceholder(els.destinationLabel, labels.choose);
+      setFieldActiveStyle(els.destinationField, Boolean(heroState.selectedOrigin));
+      closePanel(els.destinationDropdown, true);
+    }
+
+    function setOrigin(origin) {
+      heroState.selectedOrigin = origin;
+
+      setLabelSelected(els.originLabel, origin.label);
+      closePanel(els.originDropdown);
+
+      resetDestinationForHero();
+    }
+
+    async function loadOriginPlaces() {
+      if (heroState.apiUnavailable) return;
+      if (heroState.isLoadingOrigins || heroState.originLoaded) return;
+
+      heroState.isLoadingOrigins = true;
+
+      setFieldLoading(els.originField, true);
+
+      if (!heroState.selectedOrigin) {
+        setLabelPlaceholder(els.originLabel, labels.loading);
+      }
+
+      try {
+        const apiLanguage = API_LANGUAGE_MAP[heroState.language] || "de";
+
+        const payload = await apiGet("get-places", {
+          type: "departure",
+          language: apiLanguage,
+          operator_id: CONFIG.operatorId
+        }, "hero-origin-places");
+
+        const places = Array.isArray(payload)
+          ? payload.map(mapPlace).filter(function (place) {
+              return Boolean(place.label && place.apiId);
+            })
+          : [];
+
+        heroState.originPlaces = sortPlacesAlphabetically(places);
+        heroState.originLoaded = true;
+
+        renderHeroOptions(
+          els.originDropdown,
+          heroState.originPlaces,
+          setOrigin,
+          labels.noDepartures,
+          "origin"
+        );
+
+        if (!heroState.selectedOrigin) {
+          setLabelPlaceholder(els.originLabel, labels.choose);
+        }
+      } catch (error) {
+        console.error("Twiliner hero origin API error:", error);
+
+        heroState.apiUnavailable = true;
+        heroState.fallbackReason = error;
+
+        setLabelPlaceholder(els.originLabel, labels.choose);
+      } finally {
+        heroState.isLoadingOrigins = false;
+        setFieldLoading(els.originField, false);
+      }
+    }
+
+    async function handleOriginClick(event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+
+      await loadOriginPlaces();
+
+      if (heroState.originLoaded) {
+        togglePanel(els.originDropdown);
+      }
+    }
+
+    function getHeroStatus() {
+      return {
+        apiUnavailable: heroState.apiUnavailable,
+        fallbackReason: heroState.fallbackReason,
+        language: heroState.language,
+
+        selectedOrigin: heroState.selectedOrigin,
+        selectedDestination: heroState.selectedDestination,
+
+        originLoaded: heroState.originLoaded,
+        destinationLoaded: heroState.destinationLoaded,
+
+        originPlacesCount: heroState.originPlaces.length,
+        destinationPlacesCount: heroState.destinationPlaces.length,
+
+        isLoadingOrigins: heroState.isLoadingOrigins,
+        isLoadingDestinations: heroState.isLoadingDestinations,
+
+        originItemClass: heroState.itemClasses.origin,
+        destinationItemClass: heroState.itemClasses.destination,
+
+        openPanel: heroState.openPanel
+          ? heroState.openPanel.getAttribute("data-booking-hero-dropdown")
+          : null
+      };
+    }
+
+    function bindEvents() {
+      if (els.originField) {
+        els.originField.addEventListener("click", handleOriginClick);
+      }
+
+      document.addEventListener("click", function (event) {
+        if (!heroState.openPanel) return;
+
+        const clickedInsideOpenPanel = heroState.openPanel.contains(event.target);
+        const clickedHeroField = event.target.closest('[data-booking-hero-field]');
+
+        if (clickedInsideOpenPanel || clickedHeroField) return;
+
+        closeAllPanels();
+      });
+
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          closeAllPanels();
+        }
+      });
+    }
+
+    function init() {
+      captureTemplateClasses();
+
+      preparePanel(els.originDropdown);
+      preparePanel(els.destinationDropdown);
+
+      setFieldActiveStyle(els.destinationField, false);
+
+      bindEvents();
+
+      window.TwilinerBookingWidgetDebug = Object.assign(
+        window.TwilinerBookingWidgetDebug || {},
+        {
+          heroState,
+          heroElements: els,
+          getHeroStatus
+        }
+      );
+    }
+
+    init();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initTwilinerHeroRouteSelector);
+  } else {
+    initTwilinerHeroRouteSelector();
   }
 })();
