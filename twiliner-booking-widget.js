@@ -2120,13 +2120,14 @@
 
 /* ==========================================================================
    Twiliner Hero Route Selector
-   v17 / H5: Hero Origin + Destination Dropups
+   v18 / H6: Hero Route Prefill into Booking Modal
    - Lädt Abfahrtsorte via API
    - Lädt Ankunftsorte abhängig vom gewählten Abfahrtsort via API
    - Öffnet Hero-Dropups animiert von unten nach oben
    - Schreibt Optionen in .dropup-list-content
    - Übernimmt Webflow-Klassen vom bestehenden Beispielitem
    - Speichert selectedOrigin und selectedDestination
+   - Übergibt Hero-Auswahl an das bestehende Booking Modal
    ========================================================================== */
 
 (function () {
@@ -2139,12 +2140,14 @@
       operatorId: "a0cf1341-a01b-449d-b91f-17a1b4f84c44",
       apiTimeoutMs: 10000,
       panelTransitionMs: 300,
-      selectedTextColor: "#46288c"
+      selectedTextColor: "#46288c",
+      modalPrefillDelayMs: 450
     };
 
     const TEXT = {
       de: {
         choose: "Bitte wählen",
+        chooseDate: "Datum",
         loading: "Wird geladen...",
         noDepartures: "Keine Abfahrtsorte verfügbar",
         noDestinations: "Keine Ankunftsorte verfügbar",
@@ -2152,6 +2155,7 @@
       },
       en: {
         choose: "Please select",
+        chooseDate: "Date",
         loading: "Loading...",
         noDepartures: "No departure places available",
         noDestinations: "No arrival places available",
@@ -2772,6 +2776,230 @@
       }
     }
 
+    function getModalDebug() {
+      return window.TwilinerBookingWidgetDebug || null;
+    }
+
+    function getModalLabels(language) {
+      return language === "en"
+        ? {
+            choose: "Please select",
+            chooseDate: "Date"
+          }
+        : {
+            choose: "Bitte wählen",
+            chooseDate: "Datum"
+          };
+    }
+
+    function setModalLabelPlaceholder(labelEl, text) {
+      if (!labelEl) return;
+
+      labelEl.textContent = text;
+      labelEl.style.color = "";
+    }
+
+    function setModalLabelSelected(labelEl, text) {
+      if (!labelEl) return;
+
+      labelEl.textContent = text;
+      labelEl.style.color = CONFIG.selectedTextColor;
+    }
+
+    function setModalFieldActive(field, isActive) {
+      if (!field) return;
+
+      field.style.opacity = isActive ? "" : "0.4";
+      field.style.pointerEvents = isActive ? "" : "none";
+      field.setAttribute("aria-disabled", isActive ? "false" : "true");
+    }
+
+    function closeModalPanel(panel) {
+      if (!panel) return;
+
+      panel.style.opacity = "0";
+      panel.style.transform = "translateY(0.5rem)";
+      panel.style.pointerEvents = "none";
+      panel.style.display = "none";
+    }
+
+    function closeModalPanels(modalEls) {
+      closeModalPanel(modalEls.originDropdown);
+      closeModalPanel(modalEls.destinationDropdown);
+      closeModalPanel(modalEls.departureOverlay);
+      closeModalPanel(modalEls.returnOverlay);
+    }
+
+    function clearModalRouteState() {
+      const modal = getModalDebug();
+      if (!modal || !modal.state || !modal.elements) return false;
+
+      const modalState = modal.state;
+      const modalEls = modal.elements;
+      const modalLabels = getModalLabels(modalState.language);
+
+      modalState.selectedOrigin = null;
+      modalState.selectedDestination = null;
+      modalState.selectedDepartureDate = null;
+      modalState.selectedReturnDate = null;
+
+      modalState.destinationPlaces = [];
+      modalState.destinationLoaded = false;
+
+      modalState.departureDates = new Set();
+      modalState.departurePrices = new Map();
+      modalState.departureCheapDates = new Set();
+
+      modalState.returnDates = new Set();
+      modalState.returnPrices = new Map();
+      modalState.returnCheapDates = new Set();
+
+      modalState.departureDatesLoaded = false;
+      modalState.returnDatesLoaded = false;
+
+      setModalLabelPlaceholder(modalEls.originLabel, modalLabels.choose);
+      setModalLabelPlaceholder(modalEls.destinationLabel, modalLabels.choose);
+      setModalLabelPlaceholder(modalEls.departureLabel, modalLabels.chooseDate);
+      setModalLabelPlaceholder(modalEls.returnLabel, modalLabels.chooseDate);
+
+      setModalFieldActive(modalEls.originField, true);
+      setModalFieldActive(modalEls.destinationField, false);
+      setModalFieldActive(modalEls.departureField, false);
+      setModalFieldActive(modalEls.returnField, false);
+
+      closeModalPanels(modalEls);
+
+      if (modal.state) {
+        modal.state.openPanel = null;
+      }
+
+      return true;
+    }
+
+    function findPlaceByHeroSelection(places, heroPlace) {
+      if (!Array.isArray(places) || !heroPlace) return null;
+
+      return places.find(function (place) {
+        return place.apiId === heroPlace.apiId;
+      }) || places.find(function (place) {
+        return place.value === heroPlace.value;
+      }) || places.find(function (place) {
+        return normalizeLookupKey(place.label) === normalizeLookupKey(heroPlace.label);
+      }) || null;
+    }
+
+    function openModalDepartureCalendar() {
+      const modal = getModalDebug();
+      if (!modal || !modal.state || !modal.elements) return false;
+
+      const modalState = modal.state;
+      const modalEls = modal.elements;
+      const panel = modalEls.departureOverlay;
+
+      if (!panel) return false;
+
+      if (typeof modal.drawCalendar === "function") {
+        modal.drawCalendar("departure");
+      }
+
+      closeModalPanel(modalEls.originDropdown);
+      closeModalPanel(modalEls.destinationDropdown);
+      closeModalPanel(modalEls.returnOverlay);
+
+      modalState.openPanel = panel;
+
+      panel.style.display = "block";
+      panel.style.pointerEvents = "auto";
+      panel.style.opacity = "0";
+      panel.style.transform = "translateY(0.5rem)";
+      panel.style.transition = "opacity 300ms ease-in-out, transform 300ms ease-in-out";
+
+      window.requestAnimationFrame(function () {
+        panel.style.opacity = "1";
+        panel.style.transform = "translateY(0)";
+      });
+
+      return true;
+    }
+
+    async function prefillModalFromHero(options) {
+      const modal = getModalDebug();
+      if (!modal || !modal.state || !modal.elements) return false;
+
+      const modalState = modal.state;
+      const modalEls = modal.elements;
+
+      const origin = options && options.origin ? options.origin : null;
+      const destination = options && options.destination ? options.destination : null;
+      const openDepartureCalendar = Boolean(options && options.openDepartureCalendar);
+
+      clearModalRouteState();
+
+      if (!origin) {
+        return true;
+      }
+
+      modalState.selectedOrigin = origin;
+      setModalLabelSelected(modalEls.originLabel, origin.label);
+
+      if (typeof modal.loadDestinationPlaces === "function") {
+        await modal.loadDestinationPlaces();
+      }
+
+      setModalFieldActive(modalEls.destinationField, true);
+
+      if (!destination) {
+        return true;
+      }
+
+      const matchedDestination = findPlaceByHeroSelection(modalState.destinationPlaces, destination);
+
+      if (!matchedDestination) {
+        return true;
+      }
+
+      modalState.selectedDestination = matchedDestination;
+      setModalLabelSelected(modalEls.destinationLabel, matchedDestination.label);
+
+      modalState.selectedDepartureDate = null;
+      modalState.selectedReturnDate = null;
+
+      setModalLabelPlaceholder(modalEls.departureLabel, getModalLabels(modalState.language).chooseDate);
+      setModalLabelPlaceholder(modalEls.returnLabel, getModalLabels(modalState.language).chooseDate);
+
+      modalState.departureDates = new Set();
+      modalState.departurePrices = new Map();
+      modalState.departureCheapDates = new Set();
+      modalState.departureDatesLoaded = false;
+
+      modalState.returnDates = new Set();
+      modalState.returnPrices = new Map();
+      modalState.returnCheapDates = new Set();
+      modalState.returnDatesLoaded = false;
+
+      if (typeof modal.loadDepartureDates === "function") {
+        await modal.loadDepartureDates();
+      }
+
+      setModalFieldActive(modalEls.departureField, modalState.departureDates.size > 0);
+
+      if (openDepartureCalendar && modalState.departureDates.size > 0) {
+        openModalDepartureCalendar();
+      }
+
+      return true;
+    }
+
+    function handleSubmitClick() {
+      window.setTimeout(function () {
+        prefillModalFromHero({
+          origin: heroState.selectedOrigin,
+          destination: heroState.selectedDestination,
+          openDepartureCalendar: Boolean(heroState.selectedOrigin && heroState.selectedDestination)
+        });
+      }, CONFIG.modalPrefillDelayMs);
+    }
+
     function getHeroStatus() {
       return {
         apiUnavailable: heroState.apiUnavailable,
@@ -2808,6 +3036,10 @@
         els.destinationField.addEventListener("click", handleDestinationClick);
       }
 
+      if (els.submit) {
+        els.submit.addEventListener("click", handleSubmitClick);
+      }
+
       document.addEventListener("click", function (event) {
         if (!heroState.openPanel) return;
 
@@ -2842,7 +3074,8 @@
         {
           heroState,
           heroElements: els,
-          getHeroStatus
+          getHeroStatus,
+          prefillModalFromHero
         }
       );
     }
