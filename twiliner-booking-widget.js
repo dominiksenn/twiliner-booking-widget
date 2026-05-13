@@ -2120,14 +2120,15 @@
 
 /* ==========================================================================
    Twiliner Hero Route Selector
-   v18 / H6: Hero Route Prefill into Booking Modal
+   v19 / H7: Hero Prefill without Calendar Auto-Open + Hero Fallback
    - Lädt Abfahrtsorte via API
    - Lädt Ankunftsorte abhängig vom gewählten Abfahrtsort via API
    - Öffnet Hero-Dropups animiert von unten nach oben
    - Schreibt Optionen in .dropup-list-content
    - Übernimmt Webflow-Klassen vom bestehenden Beispielitem
-   - Speichert selectedOrigin und selectedDestination
    - Übergibt Hero-Auswahl an das bestehende Booking Modal
+   - Öffnet den Kalender NICHT automatisch
+   - Hero-Fallback bei API-Fehler: Felder ausgegraut, Button bleibt aktiv
    ========================================================================== */
 
 (function () {
@@ -2137,11 +2138,13 @@
 
     const CONFIG = {
       apiBaseUrl: "https://data.nightride.com/api",
+      bookingBaseUrl: "https://booking.twiliner.com/",
       operatorId: "a0cf1341-a01b-449d-b91f-17a1b4f84c44",
       apiTimeoutMs: 10000,
       panelTransitionMs: 300,
       selectedTextColor: "#46288c",
-      modalPrefillDelayMs: 450
+      modalPrefillDelayMs: 450,
+      trackingStorageKey: "twiliner_booking_url_params"
     };
 
     const TEXT = {
@@ -2151,7 +2154,8 @@
         loading: "Wird geladen...",
         noDepartures: "Keine Abfahrtsorte verfügbar",
         noDestinations: "Keine Ankunftsorte verfügbar",
-        selectOriginFirst: "Bitte wähle zuerst einen Abfahrtsort."
+        selectOriginFirst: "Bitte wähle zuerst einen Abfahrtsort.",
+        fallbackMessage: "Das Buchungstool wird direkt geöffnet."
       },
       en: {
         choose: "Please select",
@@ -2159,7 +2163,8 @@
         loading: "Loading...",
         noDepartures: "No departure places available",
         noDestinations: "No arrival places available",
-        selectOriginFirst: "Please select a departure place first."
+        selectOriginFirst: "Please select a departure place first.",
+        fallbackMessage: "The booking tool will open directly."
       }
     };
 
@@ -2203,6 +2208,16 @@
       "010": "Luxembourg"
     };
 
+    const TURNIT_PROTECTED_PARAMS = new Set([
+      "origin",
+      "destination",
+      "departureDate",
+      "returnDate",
+      "passengers",
+      "productType",
+      "language"
+    ]);
+
     const heroState = {
       language: getCurrentLanguage(),
 
@@ -2220,6 +2235,7 @@
 
       apiUnavailable: false,
       fallbackReason: null,
+      simulateApiFailureStage: null,
 
       openPanel: null,
 
@@ -2354,6 +2370,20 @@
       });
 
       const urlString = url.toString();
+
+      if (
+        heroState.simulateApiFailureStage === "any" ||
+        heroState.simulateApiFailureStage === stage
+      ) {
+        heroState.simulateApiFailureStage = null;
+        throw makeApiError(
+          stage,
+          "Simulated hero API failure",
+          urlString,
+          null,
+          { name: "SimulatedFailure" }
+        );
+      }
 
       const controller = new AbortController();
       const timeout = window.setTimeout(function () {
@@ -2536,6 +2566,14 @@
       field.setAttribute("aria-busy", isLoading ? "true" : "false");
     }
 
+    function hardDisableField(field) {
+      if (!field) return;
+
+      field.style.opacity = "0.4";
+      field.style.pointerEvents = "none";
+      field.setAttribute("aria-disabled", "true");
+    }
+
     function showHeroError(message) {
       if (!els.error) return;
 
@@ -2579,12 +2617,14 @@
         item.addEventListener("click", function (event) {
           event.preventDefault();
           event.stopPropagation();
+          if (heroState.apiUnavailable) return;
           onSelect(option);
         });
 
         item.addEventListener("keydown", function (event) {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
+            if (heroState.apiUnavailable) return;
             onSelect(option);
           }
         });
@@ -2620,6 +2660,32 @@
       closePanel(els.destinationDropdown);
 
       hideHeroError();
+    }
+
+    function activateHeroFallbackMode(reason) {
+      const fallbackReason = reason && typeof reason === "object"
+        ? reason
+        : makeApiError("hero-fallback", String(reason || labels.fallbackMessage), null, null, null);
+
+      heroState.apiUnavailable = true;
+      heroState.fallbackReason = fallbackReason;
+
+      hero.setAttribute("data-booking-hero-api-unavailable", "true");
+
+      closeAllPanels();
+
+      hardDisableField(els.originField);
+      hardDisableField(els.destinationField);
+
+      if (els.submit) {
+        els.submit.style.opacity = "";
+        els.submit.style.pointerEvents = "";
+        els.submit.setAttribute("aria-disabled", "false");
+      }
+
+      showHeroError(labels.fallbackMessage);
+
+      console.warn("Twiliner hero fallback mode activated:", fallbackReason);
     }
 
     async function loadOriginPlaces() {
@@ -2666,10 +2732,8 @@
       } catch (error) {
         console.error("Twiliner hero origin API error:", error);
 
-        heroState.apiUnavailable = true;
-        heroState.fallbackReason = error;
-
         setLabelPlaceholder(els.originLabel, labels.choose);
+        activateHeroFallbackMode(error);
       } finally {
         heroState.isLoadingOrigins = false;
         setFieldLoading(els.originField, false);
@@ -2730,10 +2794,8 @@
       } catch (error) {
         console.error("Twiliner hero destination API error:", error);
 
-        heroState.apiUnavailable = true;
-        heroState.fallbackReason = error;
-
         setLabelPlaceholder(els.destinationLabel, labels.choose);
+        activateHeroFallbackMode(error);
       } finally {
         heroState.isLoadingDestinations = false;
         setFieldLoading(els.destinationField, false);
@@ -2745,6 +2807,8 @@
         event.preventDefault();
         event.stopPropagation();
       }
+
+      if (heroState.apiUnavailable) return;
 
       hideHeroError();
 
@@ -2761,6 +2825,8 @@
         event.stopPropagation();
       }
 
+      if (heroState.apiUnavailable) return;
+
       hideHeroError();
 
       if (!heroState.selectedOrigin) {
@@ -2773,6 +2839,63 @@
 
       if (heroState.destinationLoaded) {
         togglePanel(els.destinationDropdown);
+      }
+    }
+
+    function readStoredUrlParams() {
+      try {
+        const raw = sessionStorage.getItem(CONFIG.trackingStorageKey);
+        if (!raw) return [];
+
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (_) {
+        return [];
+      }
+    }
+
+    function appendTrackingParams(targetParams) {
+      const merged = new Map();
+
+      readStoredUrlParams().forEach(function (item) {
+        if (!item || !item.key) return;
+        if (TURNIT_PROTECTED_PARAMS.has(item.key)) return;
+        merged.set(item.key, item.value || "");
+      });
+
+      try {
+        const current = new URLSearchParams(window.location.search || "");
+        current.forEach(function (value, key) {
+          if (!key || value === "") return;
+          if (TURNIT_PROTECTED_PARAMS.has(key)) return;
+          merged.set(key, value);
+        });
+      } catch (_) {
+        // Ignore URL parsing issues.
+      }
+
+      merged.forEach(function (value, key) {
+        if (!targetParams.has(key)) {
+          targetParams.append(key, value);
+        }
+      });
+    }
+
+    function buildHeroFallbackUrl() {
+      try {
+        const url = new URL(CONFIG.bookingBaseUrl);
+        const params = new URLSearchParams();
+
+        params.set("language", heroState.language);
+        appendTrackingParams(params);
+
+        const query = params.toString();
+
+        return query
+          ? url.toString().replace(/\?$/, "") + "?" + query
+          : url.toString();
+      } catch (_) {
+        return CONFIG.bookingBaseUrl;
       }
     }
 
@@ -2888,40 +3011,6 @@
       }) || null;
     }
 
-    function openModalDepartureCalendar() {
-      const modal = getModalDebug();
-      if (!modal || !modal.state || !modal.elements) return false;
-
-      const modalState = modal.state;
-      const modalEls = modal.elements;
-      const panel = modalEls.departureOverlay;
-
-      if (!panel) return false;
-
-      if (typeof modal.drawCalendar === "function") {
-        modal.drawCalendar("departure");
-      }
-
-      closeModalPanel(modalEls.originDropdown);
-      closeModalPanel(modalEls.destinationDropdown);
-      closeModalPanel(modalEls.returnOverlay);
-
-      modalState.openPanel = panel;
-
-      panel.style.display = "block";
-      panel.style.pointerEvents = "auto";
-      panel.style.opacity = "0";
-      panel.style.transform = "translateY(0.5rem)";
-      panel.style.transition = "opacity 300ms ease-in-out, transform 300ms ease-in-out";
-
-      window.requestAnimationFrame(function () {
-        panel.style.opacity = "1";
-        panel.style.transform = "translateY(0)";
-      });
-
-      return true;
-    }
-
     async function prefillModalFromHero(options) {
       const modal = getModalDebug();
       if (!modal || !modal.state || !modal.elements) return false;
@@ -2931,7 +3020,6 @@
 
       const origin = options && options.origin ? options.origin : null;
       const destination = options && options.destination ? options.destination : null;
-      const openDepartureCalendar = Boolean(options && options.openDepartureCalendar);
 
       clearModalRouteState();
 
@@ -2983,21 +3071,48 @@
 
       setModalFieldActive(modalEls.departureField, modalState.departureDates.size > 0);
 
-      if (openDepartureCalendar && modalState.departureDates.size > 0) {
-        openModalDepartureCalendar();
-      }
-
       return true;
     }
 
-    function handleSubmitClick() {
+    function handleSubmitClick(event) {
+      if (heroState.apiUnavailable) {
+        if (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+        }
+
+        window.location.href = buildHeroFallbackUrl();
+        return;
+      }
+
       window.setTimeout(function () {
         prefillModalFromHero({
           origin: heroState.selectedOrigin,
-          destination: heroState.selectedDestination,
-          openDepartureCalendar: Boolean(heroState.selectedOrigin && heroState.selectedDestination)
+          destination: heroState.selectedDestination
         });
       }, CONFIG.modalPrefillDelayMs);
+    }
+
+    function simulateHeroFallback() {
+      activateHeroFallbackMode(makeApiError(
+        "hero-manual-test",
+        "Manually triggered hero fallback test",
+        null,
+        null,
+        { name: "ManualTest" }
+      ));
+
+      return getHeroStatus();
+    }
+
+    function simulateHeroApiFailureOnce(stage) {
+      heroState.simulateApiFailureStage = stage || "any";
+
+      return {
+        message: "The next matching hero API call will fail once.",
+        stage: heroState.simulateApiFailureStage
+      };
     }
 
     function getHeroStatus() {
@@ -3021,6 +3136,8 @@
         originItemClass: heroState.itemClasses.origin,
         destinationItemClass: heroState.itemClasses.destination,
 
+        fallbackUrl: buildHeroFallbackUrl(),
+
         openPanel: heroState.openPanel
           ? heroState.openPanel.getAttribute("data-booking-hero-dropdown")
           : null
@@ -3037,7 +3154,7 @@
       }
 
       if (els.submit) {
-        els.submit.addEventListener("click", handleSubmitClick);
+        els.submit.addEventListener("click", handleSubmitClick, true);
       }
 
       document.addEventListener("click", function (event) {
@@ -3075,7 +3192,10 @@
           heroState,
           heroElements: els,
           getHeroStatus,
-          prefillModalFromHero
+          prefillModalFromHero,
+          buildHeroFallbackUrl,
+          simulateHeroFallback,
+          simulateHeroApiFailureOnce
         }
       );
     }
