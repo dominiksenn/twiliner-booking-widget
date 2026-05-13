@@ -2120,7 +2120,7 @@
 
 /* ==========================================================================
    Twiliner Hero Route Selector
-   v19 / H7: Hero Prefill without Calendar Auto-Open + Hero Fallback
+   v20 / H8: Hero Fallback Visual Fix + No Dates Message
    - Lädt Abfahrtsorte via API
    - Lädt Ankunftsorte abhängig vom gewählten Abfahrtsort via API
    - Öffnet Hero-Dropups animiert von unten nach oben
@@ -2128,7 +2128,8 @@
    - Übernimmt Webflow-Klassen vom bestehenden Beispielitem
    - Übergibt Hero-Auswahl an das bestehende Booking Modal
    - Öffnet den Kalender NICHT automatisch
-   - Hero-Fallback bei API-Fehler: Felder ausgegraut, Button bleibt aktiv
+   - Hero-Fallback bei API-Fehler: Felder bleiben ausgegraut, Button bleibt aktiv
+   - Zeigt Modal-Fehler, wenn für eine Route keine buchbaren Hinfahrtdaten verfügbar sind
    ========================================================================== */
 
 (function () {
@@ -2155,6 +2156,7 @@
         noDepartures: "Keine Abfahrtsorte verfügbar",
         noDestinations: "Keine Ankunftsorte verfügbar",
         selectOriginFirst: "Bitte wähle zuerst einen Abfahrtsort.",
+        noBookableDates: "Für diese Verbindung sind aktuell keine Reisedaten verfügbar.",
         fallbackMessage: "Das Buchungstool wird direkt geöffnet."
       },
       en: {
@@ -2164,6 +2166,7 @@
         noDepartures: "No departure places available",
         noDestinations: "No arrival places available",
         selectOriginFirst: "Please select a departure place first.",
+        noBookableDates: "There are currently no travel dates available for this connection.",
         fallbackMessage: "The booking tool will open directly."
       }
     };
@@ -2561,6 +2564,10 @@
     function setFieldLoading(field, isLoading) {
       if (!field) return;
 
+      if (heroState.apiUnavailable) {
+        return;
+      }
+
       field.style.opacity = isLoading ? "0.6" : "";
       field.style.pointerEvents = isLoading ? "none" : "";
       field.setAttribute("aria-busy", isLoading ? "true" : "false");
@@ -2907,11 +2914,13 @@
       return language === "en"
         ? {
             choose: "Please select",
-            chooseDate: "Date"
+            chooseDate: "Date",
+            noBookableDates: TEXT.en.noBookableDates
           }
         : {
             choose: "Bitte wählen",
-            chooseDate: "Datum"
+            chooseDate: "Datum",
+            noBookableDates: TEXT.de.noBookableDates
           };
     }
 
@@ -2935,6 +2944,21 @@
       field.style.opacity = isActive ? "" : "0.4";
       field.style.pointerEvents = isActive ? "" : "none";
       field.setAttribute("aria-disabled", isActive ? "false" : "true");
+    }
+
+    function showModalError(message) {
+      const modal = getModalDebug();
+      if (!modal || !modal.elements || !modal.elements.error) return;
+
+      modal.elements.error.textContent = message;
+      modal.elements.error.style.display = "block";
+    }
+
+    function hideModalError() {
+      const modal = getModalDebug();
+      if (!modal || !modal.elements || !modal.elements.error) return;
+
+      modal.elements.error.style.display = "none";
     }
 
     function closeModalPanel(panel) {
@@ -2990,6 +3014,8 @@
       setModalFieldActive(modalEls.departureField, false);
       setModalFieldActive(modalEls.returnField, false);
 
+      hideModalError();
+
       closeModalPanels(modalEls);
 
       if (modal.state) {
@@ -3017,6 +3043,7 @@
 
       const modalState = modal.state;
       const modalEls = modal.elements;
+      const modalLabels = getModalLabels(modalState.language);
 
       const origin = options && options.origin ? options.origin : null;
       const destination = options && options.destination ? options.destination : null;
@@ -3052,8 +3079,8 @@
       modalState.selectedDepartureDate = null;
       modalState.selectedReturnDate = null;
 
-      setModalLabelPlaceholder(modalEls.departureLabel, getModalLabels(modalState.language).chooseDate);
-      setModalLabelPlaceholder(modalEls.returnLabel, getModalLabels(modalState.language).chooseDate);
+      setModalLabelPlaceholder(modalEls.departureLabel, modalLabels.chooseDate);
+      setModalLabelPlaceholder(modalEls.returnLabel, modalLabels.chooseDate);
 
       modalState.departureDates = new Set();
       modalState.departurePrices = new Map();
@@ -3069,7 +3096,14 @@
         await modal.loadDepartureDates();
       }
 
+      if (modalState.departureDatesLoaded && modalState.departureDates.size === 0) {
+        setModalFieldActive(modalEls.departureField, false);
+        showModalError(modalLabels.noBookableDates);
+        return true;
+      }
+
       setModalFieldActive(modalEls.departureField, modalState.departureDates.size > 0);
+      hideModalError();
 
       return true;
     }
