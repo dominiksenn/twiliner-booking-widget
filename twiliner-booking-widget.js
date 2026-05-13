@@ -15,8 +15,7 @@
  * 8. Validierung Button
  * 9. Turnit Link
  * 10. URL Parameter & Fallback
- * v16: Hero Route Selector H4 - Origin Dropup Add-on
- */
+* v21: Main Modal No Bookable Dates Message + Hero Add-on */
 
     const CONFIG = {
       apiBaseUrl: "https://data.nightride.com/api",
@@ -40,6 +39,7 @@
         noDepartures: "Keine Abfahrtsorte verfügbar",
         noDestinations: "Keine Ankunftsorte verfügbar",
         noDates: "Keine verfügbaren Reisedaten.",
+        noBookableDates: "Für diese Verbindung sind aktuell keine Reisedaten verfügbar.",
         selectOriginFirst: "Bitte wähle einen Abfahrtsort.",
         selectDestinationFirst: "Bitte wähle einen Ankunftsort.",
         selectRouteFirst: "Bitte wähle zuerst Abfahrtsort und Ankunftsort.",
@@ -87,6 +87,7 @@
         noDepartures: "No departure places available",
         noDestinations: "No arrival places available",
         noDates: "No available travel dates.",
+        noBookableDates: "There are currently no travel dates available for this connection.",
         selectOriginFirst: "Please select a departure place.",
         selectDestinationFirst: "Please select an arrival place.",
         selectRouteFirst: "Please select departure and arrival first.",
@@ -1282,23 +1283,29 @@
 
           drawCalendar("return");
           setFieldActiveStyle(els.returnField, dates.size > 0);
-        } else {
-          state.departureDates = dates;
-          state.departurePrices = prices;
-          state.departureCheapDates = cheapDates;
-          state.departureDatesLoaded = true;
+} else {
+  state.departureDates = dates;
+  state.departurePrices = prices;
+  state.departureCheapDates = cheapDates;
+  state.departureDatesLoaded = true;
 
-          if (firstAvailableDate) {
-            const date = parseIsoDate(firstAvailableDate);
-            state.viewDates.departure = new Date(date.getFullYear(), date.getMonth(), 1);
-          } else {
-            const today = new Date();
-            state.viewDates.departure = new Date(today.getFullYear(), today.getMonth(), 1);
-          }
+  if (firstAvailableDate) {
+    const date = parseIsoDate(firstAvailableDate);
+    state.viewDates.departure = new Date(date.getFullYear(), date.getMonth(), 1);
+  } else {
+    const today = new Date();
+    state.viewDates.departure = new Date(today.getFullYear(), today.getMonth(), 1);
+  }
 
-          drawCalendar("departure");
-          setFieldActiveStyle(els.departureField, dates.size > 0);
-        }
+  drawCalendar("departure");
+  setFieldActiveStyle(els.departureField, dates.size > 0);
+
+  if (dates.size === 0) {
+    showError(labels.noBookableDates || labels.noDates);
+  } else {
+    hideError();
+  }
+}
       } catch (error) {
         console.error("Twiliner " + type + " dates API error:", error);
         activateFallbackMode(error);
