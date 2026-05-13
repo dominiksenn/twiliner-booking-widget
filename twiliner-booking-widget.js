@@ -15,7 +15,7 @@
  * 8. Validierung Button
  * 9. Turnit Link
  * 10. URL Parameter & Fallback
-* v21: Main Modal No Bookable Dates Message + Hero Add-on */
+* v22: Persistent No Bookable Dates Message Add-on */
 
     const CONFIG = {
       apiBaseUrl: "https://data.nightride.com/api",
@@ -3248,5 +3248,115 @@
     document.addEventListener("DOMContentLoaded", initTwilinerHeroRouteSelector);
   } else {
     initTwilinerHeroRouteSelector();
+  }
+})();
+
+
+
+/* ==========================================================================
+   Twiliner No Bookable Dates Guard
+   v22: Persistent No Bookable Dates Message
+   - Hält die No-Dates-Meldung stabil, wenn eine Route keine buchbaren Daten hat
+   - Gilt für normales Modal und Hero → Modal
+   - Verhindert falsche Meldungen bei Klick auf von / Datum, bis / Datum, Jetzt buchen
+   ========================================================================== */
+
+(function () {
+  function initTwilinerNoBookableDatesGuard() {
+    const MODAL_ERROR_TEXT = {
+      de: "Für diese Verbindung sind aktuell keine Reisedaten verfügbar.",
+      en: "There are currently no travel dates available for this connection."
+    };
+
+    function getDebug() {
+      return window.TwilinerBookingWidgetDebug || null;
+    }
+
+    function getLanguage(debug) {
+      return debug && debug.state && debug.state.language === "en" ? "en" : "de";
+    }
+
+    function getNoBookableMessage(debug) {
+      return MODAL_ERROR_TEXT[getLanguage(debug)] || MODAL_ERROR_TEXT.de;
+    }
+
+    function isNoBookableRoute(debug) {
+      if (!debug || !debug.state) return false;
+
+      const state = debug.state;
+
+      return Boolean(
+        state.selectedOrigin &&
+        state.selectedDestination &&
+        state.departureDatesLoaded &&
+        state.departureDates &&
+        state.departureDates.size === 0
+      );
+    }
+
+    function showNoBookableMessage(debug) {
+      if (!debug || !debug.elements || !debug.elements.error) return;
+
+      debug.elements.error.textContent = getNoBookableMessage(debug);
+      debug.elements.error.style.display = "block";
+    }
+
+    function guardClick(event) {
+      const debug = getDebug();
+
+      if (!isNoBookableRoute(debug)) return;
+
+      const target = event.target;
+
+      const clickedDeparture =
+        debug.elements.departureField &&
+        debug.elements.departureField.contains(target);
+
+      const clickedReturn =
+        debug.elements.returnField &&
+        debug.elements.returnField.contains(target);
+
+      const clickedSubmit =
+        debug.elements.submit &&
+        debug.elements.submit.contains(target);
+
+      if (!clickedDeparture && !clickedReturn && !clickedSubmit) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+
+      showNoBookableMessage(debug);
+    }
+
+    function syncNoBookableMessage() {
+      const debug = getDebug();
+
+      if (!isNoBookableRoute(debug)) return;
+
+      showNoBookableMessage(debug);
+    }
+
+    document.addEventListener("click", guardClick, true);
+
+    window.setInterval(syncNoBookableMessage, 500);
+
+    window.TwilinerBookingWidgetDebug = Object.assign(
+      window.TwilinerBookingWidgetDebug || {},
+      {
+        isNoBookableRoute: function () {
+          return isNoBookableRoute(getDebug());
+        },
+        showNoBookableMessage: function () {
+          return showNoBookableMessage(getDebug());
+        }
+      }
+    );
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initTwilinerNoBookableDatesGuard);
+  } else {
+    initTwilinerNoBookableDatesGuard();
   }
 })();
