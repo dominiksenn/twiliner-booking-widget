@@ -2129,22 +2129,15 @@
 
 /* ==========================================================================
    Twiliner Destination Route Selector
-   v26 / D5 Clean: Responsive Layout + Smooth Expand/Collapse
-   - Liest aktuelle Destination API ID aus dem CMS-Attribut
-   - Laedt alle moeglichen Abfahrtsorte via API
-   - Prueft pro Abfahrtsort, ob die aktuelle Destination angefahren wird
-   - Rendert die moeglichen Abfahrtsorte in die Origin-Liste
-   - Setzt den ersten verfuegbaren Abfahrtsort als Default
-   - Initial nur ein Abfahrtsort sichtbar
-   - Expanded per IntersectionObserver, spaeter ausgelöst
-   - Click auf Origin collapsed die Liste smooth
-   - Click auf sichtbaren selected Origin oeffnet die Liste wieder
-   - Desktop: rechte Linien folgen dynamisch der linken Listenhoehe
-   - Desktop: Destination-Text und Icon werden dynamisch zentriert
-   - Mobile: keine Hoehen-Synchronisierung, Liste klappt natuerlich auf
-   - Origin- und Destination-Details erscheinen nach Auswahl
-   - Desktop-Hover auf Origins: #eb8096
-   - Icon wird nie ueberschrieben
+   v27 / D6 Clean State-Based Layout
+   - Laedt Destination + moegliche Abfahrtsorte via API
+   - Rendert Origin-Items dynamisch
+   - Setzt nur State-Klassen statt Layout-Hoehen zu berechnen
+   - Kein translateY fuer Icon/Destination
+   - Kein minHeight/maxHeight fuer Layout-Synchronisierung
+   - Webflow/CSS/Grid uebernimmt Layout und Responsiveness
+   - Klick auf selected Origin oeffnet Liste wieder
+   - Klick auf anderen Origin klappt Liste zusammen und zeigt Details
    ========================================================================== */
 
 (function () {
@@ -2158,12 +2151,6 @@
       apiTimeoutMs: 10000,
       selectedTextColor: "#46288c",
       hoverTextColor: "#eb8096",
-      breakpointMobile: 767,
-      listTransitionMs: 680,
-      itemTransitionMs: 520,
-      detailTransitionMs: 360,
-      itemStaggerMs: 70,
-      targetTransitionMs: 680,
       observerThreshold: 0.68
     };
 
@@ -2223,21 +2210,16 @@
       hasUserSelectedOrigin: false,
 
       error: null,
-      observer: null,
-
-      templateClasses: {
-        item: null,
-        name: null,
-        address: null
-      }
+      observer: null
     };
 
     const els = {
+      cascader: root.querySelector(".cascader-wrapper") || root,
+
       originList: root.querySelector('[data-booking-destination-origin-list="true"]'),
       originTemplate: root.querySelector('[data-booking-destination-origin-template="true"]'),
 
       destinationWrapper: root.querySelector('[data-booking-destination-target-wrapper="true"]'),
-      destinationTargetItem: root.querySelector('[data-booking-destination-target-item="true"]'),
       destinationLabel: root.querySelector('[data-booking-destination-label-target="true"]'),
       destinationAddress: root.querySelector('[data-booking-destination-address-target="true"]'),
       destinationMap: root.querySelector('[data-booking-destination-map-target="true"]'),
@@ -2247,11 +2229,6 @@
 
       submit: root.querySelector('[data-booking-destination-submit="true"]')
     };
-
-    els.originWrapper = els.originList ? els.originList.closest(".cascading-text-wrapper") : null;
-    els.destinationPositioner = els.destinationTargetItem
-      ? els.destinationTargetItem.closest(".cascading-text-positioner")
-      : null;
 
     const templateClone = els.originTemplate ? els.originTemplate.cloneNode(true) : null;
 
@@ -2423,60 +2400,192 @@
       }
     }
 
-    function isMobile() {
-      return window.matchMedia("(max-width: " + CONFIG.breakpointMobile + "px)").matches;
-    }
-
     function uniqueElements(elements) {
       return elements.filter(Boolean).filter(function (el, index, array) {
         return array.indexOf(el) === index;
       });
     }
 
-    function hasUsefulHref(el) {
-      if (!el || !el.getAttribute) return false;
+    function resetInlineStyles() {
+      const elementsToClean = uniqueElements([
+        els.originList,
+        els.iconWrapper,
+        els.destinationWrapper,
+        els.destinationLabel,
+        els.destinationAddress,
+        els.destinationMap,
+        root.querySelector(".cascading-text-positioner"),
+        root.querySelector('[data-booking-destination-target-item="true"]')
+      ]);
 
-      const href = el.getAttribute("href") || "";
-      return Boolean(href && href !== "#");
+      elementsToClean.forEach(function (el) {
+        if (!el) return;
+
+        [
+          "overflow",
+          "transition",
+          "willChange",
+          "maxHeight",
+          "minHeight",
+          "transform",
+          "opacity",
+          "pointerEvents",
+          "display",
+          "alignItems"
+        ].forEach(function (prop) {
+          el.style[prop] = "";
+        });
+      });
+
+      root.querySelectorAll('[data-booking-destination-origin-rendered="true"]').forEach(function (item) {
+        [
+          "overflow",
+          "transition",
+          "willChange",
+          "maxHeight",
+          "minHeight",
+          "transform",
+          "opacity",
+          "pointerEvents",
+          "display"
+        ].forEach(function (prop) {
+          item.style[prop] = "";
+        });
+
+        const nameEl = item.querySelector('[data-booking-destination-origin-name="true"]');
+        if (nameEl) {
+          nameEl.style.color = "";
+          nameEl.style.transition = "";
+        }
+
+        item.querySelectorAll(".cascading-address").forEach(function (addressEl) {
+          [
+            "overflow",
+            "transition",
+            "maxHeight",
+            "transform",
+            "opacity",
+            "pointerEvents",
+            "display"
+          ].forEach(function (prop) {
+            addressEl.style[prop] = "";
+          });
+        });
+      });
     }
 
-    function hasVisibleContent(el) {
-      if (!el) return false;
+    function injectStateStyles() {
+      if (document.getElementById("twiliner-destination-route-state-styles")) return;
 
-      const text = el.textContent ? el.textContent.trim() : "";
-      return Boolean(text || hasUsefulHref(el));
+      const style = document.createElement("style");
+      style.id = "twiliner-destination-route-state-styles";
+
+      style.textContent = `
+        [data-booking-destination-route="true"] .cascader-wrapper {
+          --tw-destination-primary: ${CONFIG.selectedTextColor};
+          --tw-destination-hover: ${CONFIG.hoverTextColor};
+        }
+
+        [data-booking-destination-route="true"] .cascading-text-list {
+          overflow: hidden;
+        }
+
+        [data-booking-destination-route="true"] .cascading-text-item {
+          transition:
+            opacity 520ms ease-in-out,
+            transform 520ms ease-in-out,
+            max-height 680ms ease-in-out;
+          overflow: hidden;
+        }
+
+        [data-booking-destination-route="true"] .cascading-text-item [data-booking-destination-origin-name="true"],
+        [data-booking-destination-route="true"] [data-booking-destination-label-target="true"] {
+          color: var(--tw-destination-primary);
+          transition: color 220ms ease-in-out;
+        }
+
+        [data-booking-destination-route="true"] .cascading-address {
+          display: block;
+          overflow: hidden;
+          opacity: 0;
+          transform: translateY(-0.35rem);
+          max-height: 0;
+          pointer-events: none;
+          transition:
+            opacity 360ms ease-in-out,
+            transform 360ms ease-in-out,
+            max-height 360ms ease-in-out;
+        }
+
+        [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"]:not(.is-selected) {
+          opacity: 0;
+          transform: translateY(-0.5rem);
+          max-height: 0;
+          pointer-events: none;
+        }
+
+        [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected {
+          opacity: 1;
+          transform: translateY(0);
+          max-height: 20rem;
+          pointer-events: auto;
+        }
+
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"] {
+          opacity: 1;
+          transform: translateY(0);
+          max-height: 20rem;
+          pointer-events: auto;
+        }
+
+        [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected .cascading-address,
+        [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-target-wrapper="true"] .cascading-address {
+          opacity: 1;
+          transform: translateY(0);
+          max-height: 8rem;
+          pointer-events: auto;
+        }
+
+        [data-booking-destination-route="true"] [data-booking-destination-target-wrapper="true"] {
+          pointer-events: none;
+        }
+
+        [data-booking-destination-route="true"] [data-booking-destination-map-target="true"] {
+          pointer-events: auto;
+        }
+
+        @media screen and (min-width: 768px) {
+          [data-booking-destination-route="true"] .cascading-text-item:hover [data-booking-destination-origin-name="true"] {
+            color: var(--tw-destination-hover) !important;
+          }
+
+          [data-booking-destination-route="true"] [data-booking-destination-target-wrapper="true"] .cascading-text-item:hover [data-booking-destination-label-target="true"] {
+            color: var(--tw-destination-primary) !important;
+          }
+        }
+
+        @media screen and (max-width: 767px) {
+          [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"],
+          [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected {
+            max-height: 40rem;
+          }
+        }
+      `;
+
+      document.head.appendChild(style);
     }
 
-    function captureTemplateClasses() {
-      if (!templateClone) return;
+    function setCascaderState() {
+      if (!els.cascader) return;
 
-      const nameEl = templateClone.querySelector('[data-booking-destination-origin-name="true"]');
-      const addressEl = templateClone.querySelector('[data-booking-destination-origin-address="true"], [data-booking-destination-origin-map="true"]');
-
-      routeState.templateClasses.item = templateClone.className || "cascading-text-item";
-      routeState.templateClasses.name = nameEl?.className || "cascading-text";
-      routeState.templateClasses.address = addressEl?.className || "cascading-address";
+      els.cascader.classList.toggle("is-expanded", routeState.isExpanded);
+      els.cascader.classList.toggle("has-selection", routeState.hasUserSelectedOrigin);
+      els.cascader.classList.toggle("is-loaded", routeState.isLoaded);
     }
 
     function setDestinationLabel() {
       if (!els.destinationLabel || !routeState.currentDestination) return;
-
       els.destinationLabel.textContent = routeState.currentDestination.label;
-      els.destinationLabel.style.color = CONFIG.selectedTextColor;
-    }
-
-    function setDestinationPointerEvents() {
-      if (els.destinationWrapper) {
-        els.destinationWrapper.style.pointerEvents = "none";
-      }
-
-      if (els.destinationTargetItem) {
-        els.destinationTargetItem.style.pointerEvents = "none";
-      }
-
-      uniqueElements([els.destinationAddress, els.destinationMap]).forEach(function (el) {
-        el.style.pointerEvents = "auto";
-      });
     }
 
     function clearGeneratedOriginList() {
@@ -2484,75 +2593,12 @@
       els.originList.innerHTML = "";
     }
 
-    function getOriginDetailElements(item) {
-      if (!item) return [];
-
-      return uniqueElements([
-        item.querySelector('[data-booking-destination-origin-address="true"]'),
-        item.querySelector('[data-booking-destination-origin-map="true"]')
-      ]);
-    }
-
-    function getDestinationDetailElements() {
-      return uniqueElements([els.destinationAddress, els.destinationMap]);
-    }
-
-    function hideDetailElements(elements, instant) {
-      uniqueElements(elements).forEach(function (el) {
-        if (!el) return;
-
-        el.style.display = "";
-        el.style.overflow = "hidden";
-        el.style.transition = instant
-          ? "none"
-          : "opacity " + CONFIG.detailTransitionMs + "ms ease-in-out, transform " + CONFIG.detailTransitionMs + "ms ease-in-out, max-height " + CONFIG.detailTransitionMs + "ms ease-in-out";
-
-        el.style.opacity = "0";
-        el.style.transform = "translateY(-0.35rem)";
-        el.style.maxHeight = "0px";
-        el.style.pointerEvents = "none";
-      });
-    }
-
-    function showDetailElements(elements) {
-      uniqueElements(elements).forEach(function (el) {
-        if (!el || !hasVisibleContent(el)) return;
-
-        el.style.display = "";
-        el.style.overflow = "hidden";
-        el.style.transition =
-          "opacity " + CONFIG.detailTransitionMs + "ms ease-in-out, " +
-          "transform " + CONFIG.detailTransitionMs + "ms ease-in-out, " +
-          "max-height " + CONFIG.detailTransitionMs + "ms ease-in-out";
-
-        el.style.maxHeight = el.scrollHeight + "px";
-        el.style.opacity = "1";
-        el.style.transform = "translateY(0)";
-        el.style.pointerEvents = "auto";
-      });
-    }
-
-    function hideAllOriginDetails(instant) {
-      getRenderedOriginItems().forEach(function (item) {
-        hideDetailElements(getOriginDetailElements(item), instant);
-      });
-    }
-
-    function hideDestinationDetails(instant) {
-      hideDetailElements(getDestinationDetailElements(), instant);
-    }
-
-    function showDestinationDetails() {
-      showDetailElements(getDestinationDetailElements());
-      setDestinationPointerEvents();
-    }
-
     function createFallbackOriginItem() {
       const item = document.createElement("div");
-      item.className = routeState.templateClasses.item || "cascading-text-item";
+      item.className = "cascading-text-item";
 
       const nameEl = document.createElement("div");
-      nameEl.className = routeState.templateClasses.name || "cascading-text";
+      nameEl.className = "cascading-text";
       nameEl.setAttribute("data-booking-destination-origin-name", "true");
 
       item.appendChild(nameEl);
@@ -2569,36 +2615,12 @@
       item.setAttribute("role", "button");
       item.setAttribute("tabindex", "0");
 
-      item.style.overflow = "hidden";
-      item.style.willChange = "opacity, transform, max-height";
-      item.style.transition =
-        "opacity " + CONFIG.itemTransitionMs + "ms ease-in-out, " +
-        "transform " + CONFIG.itemTransitionMs + "ms ease-in-out, " +
-        "max-height " + CONFIG.listTransitionMs + "ms ease-in-out";
+      item.classList.remove("is-selected");
 
       const nameEl = item.querySelector('[data-booking-destination-origin-name="true"]');
-      const detailEls = getOriginDetailElements(item);
-
       if (nameEl) {
         nameEl.textContent = place.label;
-        nameEl.style.color = CONFIG.selectedTextColor;
-        nameEl.style.transition = "color 220ms ease-in-out";
       }
-
-      hideDetailElements(detailEls, true);
-
-      item.addEventListener("mouseenter", function () {
-        if (isMobile()) return;
-        if (!nameEl) return;
-
-        nameEl.style.color = CONFIG.hoverTextColor;
-      });
-
-      item.addEventListener("mouseleave", function () {
-        if (!nameEl) return;
-
-        nameEl.style.color = CONFIG.selectedTextColor;
-      });
 
       item.addEventListener("click", function (event) {
         event.preventDefault();
@@ -2606,26 +2628,26 @@
         const isSelected = routeState.selectedOrigin && routeState.selectedOrigin.apiId === place.apiId;
 
         if (isSelected && !routeState.isExpanded && routeState.hasUserSelectedOrigin) {
-          openFromSelectedCollapsed(item);
+          routeState.isExpanded = true;
+          routeState.hasUserSelectedOrigin = false;
+          setCascaderState();
+          updateSelectedOriginVisual();
           return;
         }
 
-        selectOrigin(place, true);
+        routeState.selectedOrigin = place;
+        routeState.isExpanded = false;
+        routeState.hasUserSelectedOrigin = true;
+
+        setCascaderState();
+        updateSelectedOriginVisual();
       });
 
       item.addEventListener("keydown", function (event) {
         if (event.key !== "Enter" && event.key !== " ") return;
 
         event.preventDefault();
-
-        const isSelected = routeState.selectedOrigin && routeState.selectedOrigin.apiId === place.apiId;
-
-        if (isSelected && !routeState.isExpanded && routeState.hasUserSelectedOrigin) {
-          openFromSelectedCollapsed(item);
-          return;
-        }
-
-        selectOrigin(place, true);
+        item.click();
       });
 
       return item;
@@ -2640,16 +2662,7 @@
         els.originList.appendChild(createOriginItem(place, index));
       });
 
-      prepareOriginList();
       updateSelectedOriginVisual();
-
-      window.requestAnimationFrame(function () {
-        applyCollapsedState(true);
-
-        window.setTimeout(function () {
-          applyCollapsedState(true);
-        }, 120);
-      });
     }
 
     function getRenderedOriginItems() {
@@ -2660,243 +2673,15 @@
       );
     }
 
-    function getSelectedOriginItem() {
-      if (!routeState.selectedOrigin) return null;
-
-      return getRenderedOriginItems().find(function (item) {
-        return item.getAttribute("data-booking-destination-origin-api-id") === routeState.selectedOrigin.apiId;
-      }) || null;
-    }
-
-    function prepareOriginList() {
-      if (!els.originList) return;
-
-      els.originList.style.overflow = "hidden";
-      els.originList.style.transition = "max-height " + CONFIG.listTransitionMs + "ms ease-in-out";
-      els.originList.style.willChange = "max-height";
-    }
-
     function updateSelectedOriginVisual() {
-      if (!els.originList || !routeState.selectedOrigin) return;
-
       getRenderedOriginItems().forEach(function (item) {
-        const isSelected = item.getAttribute("data-booking-destination-origin-api-id") === routeState.selectedOrigin.apiId;
+        const isSelected =
+          routeState.selectedOrigin &&
+          item.getAttribute("data-booking-destination-origin-api-id") === routeState.selectedOrigin.apiId;
 
-        item.classList.toggle("is-selected", isSelected);
+        item.classList.toggle("is-selected", Boolean(isSelected));
         item.setAttribute("aria-selected", isSelected ? "true" : "false");
       });
-    }
-
-    function naturalItemHeight(item) {
-      if (!item) return 0;
-
-      const previousMaxHeight = item.style.maxHeight;
-      item.style.maxHeight = "none";
-
-      const height = item.scrollHeight;
-
-      item.style.maxHeight = previousMaxHeight;
-      return height;
-    }
-
-    function selectedItemHeight() {
-      const selectedItem = getSelectedOriginItem();
-      return selectedItem ? naturalItemHeight(selectedItem) : 0;
-    }
-
-    function expandedListHeight() {
-      if (!els.originList) return 0;
-
-      const items = getRenderedOriginItems();
-      const previousListMaxHeight = els.originList.style.maxHeight;
-
-      els.originList.style.maxHeight = "none";
-      items.forEach(function (item) {
-        item.style.maxHeight = "none";
-      });
-
-      const height = els.originList.scrollHeight;
-
-      els.originList.style.maxHeight = previousListMaxHeight;
-
-      return height;
-    }
-
-    function resetDesktopRightLayout() {
-      if (els.destinationPositioner) {
-        els.destinationPositioner.style.transition = "min-height " + CONFIG.targetTransitionMs + "ms ease-in-out";
-        els.destinationPositioner.style.minHeight = "";
-        els.destinationPositioner.style.display = "";
-        els.destinationPositioner.style.alignItems = "";
-      }
-
-      if (els.destinationTargetItem) {
-        els.destinationTargetItem.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
-        els.destinationTargetItem.style.transform = "translateY(0px)";
-      }
-
-      if (els.iconWrapper) {
-        els.iconWrapper.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
-        els.iconWrapper.style.transform = "translateY(0px)";
-      }
-    }
-
-    function applyDesktopRightLayoutForExpanded() {
-      if (isMobile()) {
-        resetDesktopRightLayout();
-        return;
-      }
-
-      const listHeight = expandedListHeight();
-      if (!listHeight) return;
-
-      if (els.destinationPositioner) {
-        els.destinationPositioner.style.transition = "min-height " + CONFIG.targetTransitionMs + "ms ease-in-out";
-        els.destinationPositioner.style.minHeight = listHeight + "px";
-        els.destinationPositioner.style.display = "flex";
-        els.destinationPositioner.style.alignItems = "center";
-      }
-
-      if (els.destinationTargetItem) {
-        els.destinationTargetItem.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
-        els.destinationTargetItem.style.transform = "translateY(0px)";
-      }
-
-      if (els.iconWrapper) {
-        const iconHeight = els.iconWrapper.offsetHeight || els.iconWrapper.scrollHeight || 0;
-        const collapsedHeight = selectedItemHeight();
-        const delta = Math.max(0, (listHeight - collapsedHeight) / 2);
-
-        els.iconWrapper.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
-        els.iconWrapper.style.transform = "translateY(" + delta + "px)";
-      }
-    }
-
-    function setItemsForCollapsed(selectedItem, instant) {
-      const items = getRenderedOriginItems();
-
-      items.forEach(function (item) {
-        const isSelected = item === selectedItem;
-        const targetHeight = isSelected ? naturalItemHeight(item) : 0;
-
-        item.style.transition = instant
-          ? "none"
-          : "opacity " + CONFIG.itemTransitionMs + "ms ease-in-out, transform " + CONFIG.itemTransitionMs + "ms ease-in-out, max-height " + CONFIG.listTransitionMs + "ms ease-in-out";
-
-        item.style.transitionDelay = "0ms";
-        item.style.maxHeight = targetHeight + "px";
-        item.style.opacity = isSelected ? "1" : "0";
-        item.style.transform = isSelected ? "translateY(0)" : "translateY(-0.5rem)";
-        item.style.pointerEvents = isSelected ? "auto" : "none";
-      });
-    }
-
-    function setItemsForExpanded() {
-      const items = getRenderedOriginItems();
-
-      items.forEach(function (item, index) {
-        item.style.transition =
-          "opacity " + CONFIG.itemTransitionMs + "ms ease-in-out, " +
-          "transform " + CONFIG.itemTransitionMs + "ms ease-in-out, " +
-          "max-height " + CONFIG.listTransitionMs + "ms ease-in-out";
-
-        item.style.transitionDelay = (index * CONFIG.itemStaggerMs) + "ms";
-
-        if (isMobile()) {
-          item.style.maxHeight = "none";
-        } else {
-          item.style.maxHeight = naturalItemHeight(item) + "px";
-        }
-
-        item.style.opacity = "1";
-        item.style.transform = "translateY(0)";
-        item.style.pointerEvents = "auto";
-      });
-    }
-
-    function applyCollapsedState(instant) {
-      routeState.isExpanded = false;
-
-      const selectedItem = getSelectedOriginItem();
-      if (!els.originList || !selectedItem) return;
-
-      hideAllOriginDetails(instant);
-      hideDestinationDetails(instant);
-      resetDesktopRightLayout();
-
-      setItemsForCollapsed(selectedItem, instant);
-
-      const collapsedHeight = naturalItemHeight(selectedItem);
-      els.originList.style.maxHeight = collapsedHeight + "px";
-
-      if (routeState.hasUserSelectedOrigin && !instant) {
-        window.setTimeout(function () {
-          revealSelectedDetails();
-        }, CONFIG.listTransitionMs * 0.7);
-      }
-    }
-
-    function applyExpandedState() {
-      routeState.isExpanded = true;
-
-      const items = getRenderedOriginItems();
-      if (!els.originList || !items.length) return;
-
-      hideAllOriginDetails(false);
-      hideDestinationDetails(false);
-
-      setItemsForExpanded();
-
-      window.requestAnimationFrame(function () {
-        const targetHeight = expandedListHeight();
-        els.originList.style.maxHeight = targetHeight + "px";
-        applyDesktopRightLayoutForExpanded();
-
-        window.setTimeout(function () {
-          const refreshedHeight = expandedListHeight();
-          els.originList.style.maxHeight = refreshedHeight + "px";
-          applyDesktopRightLayoutForExpanded();
-        }, 120);
-      });
-    }
-
-    function revealSelectedDetails() {
-      const selectedItem = getSelectedOriginItem();
-      if (!selectedItem || !els.originList) return;
-
-      showDetailElements(getOriginDetailElements(selectedItem));
-      showDestinationDetails();
-
-      window.requestAnimationFrame(function () {
-        window.requestAnimationFrame(function () {
-          const fullHeight = naturalItemHeight(selectedItem);
-
-          selectedItem.style.maxHeight = fullHeight + "px";
-          els.originList.style.maxHeight = fullHeight + "px";
-        });
-      });
-    }
-
-    function openFromSelectedCollapsed(item) {
-      hideDetailElements(getOriginDetailElements(item), false);
-      hideDestinationDetails(false);
-
-      routeState.hasUserSelectedOrigin = false;
-
-      window.setTimeout(function () {
-        applyExpandedState();
-      }, 80);
-    }
-
-    function selectOrigin(place, collapseAfterSelection) {
-      routeState.selectedOrigin = place;
-      routeState.hasUserSelectedOrigin = Boolean(collapseAfterSelection);
-
-      updateSelectedOriginVisual();
-
-      if (collapseAfterSelection) {
-        applyCollapsedState(false);
-      }
     }
 
     function isArrivalAvailableForDestination(arrivalPayload) {
@@ -2989,10 +2774,15 @@
 
         setDestinationLabel();
         renderOriginList();
-        initObserver();
-        setDestinationPointerEvents();
 
         routeState.isLoaded = true;
+        routeState.isExpanded = false;
+        routeState.hasUserSelectedOrigin = false;
+
+        resetInlineStyles();
+        setCascaderState();
+        updateSelectedOriginVisual();
+        initObserver();
       } catch (error) {
         console.error("Twiliner destination route error:", error);
         routeState.error = error;
@@ -3012,7 +2802,8 @@
           if (routeState.hasUserSelectedOrigin) return;
           if (routeState.isExpanded) return;
 
-          applyExpandedState();
+          routeState.isExpanded = true;
+          setCascaderState();
         });
       }, {
         root: null,
@@ -3021,20 +2812,6 @@
       });
 
       routeState.observer.observe(root);
-    }
-
-    function handleResize() {
-      if (!routeState.isLoaded) return;
-
-      if (routeState.isExpanded) {
-        applyExpandedState();
-      } else {
-        applyCollapsedState(true);
-
-        if (routeState.hasUserSelectedOrigin) {
-          window.setTimeout(revealSelectedDetails, 80);
-        }
-      }
     }
 
     function getDestinationRouteStatus() {
@@ -3067,12 +2844,11 @@
 
         elements: {
           root: Boolean(root),
+          cascader: Boolean(els.cascader),
           originList: Boolean(els.originList),
           originTemplate: Boolean(els.originTemplate),
           destinationLabel: Boolean(els.destinationLabel),
           destinationWrapper: Boolean(els.destinationWrapper),
-          destinationTargetItem: Boolean(els.destinationTargetItem),
-          destinationPositioner: Boolean(els.destinationPositioner),
           destinationAddress: Boolean(els.destinationAddress),
           destinationMap: Boolean(els.destinationMap),
           iconWrapper: Boolean(els.iconWrapper),
@@ -3083,11 +2859,7 @@
     }
 
     function init() {
-      captureTemplateClasses();
-      hideDestinationDetails(true);
-      setDestinationPointerEvents();
-
-      window.addEventListener("resize", handleResize);
+      injectStateStyles();
 
       window.TwilinerBookingWidgetDebug = Object.assign(
         window.TwilinerBookingWidgetDebug || {},
@@ -3095,13 +2867,19 @@
           destinationRouteState: routeState,
           destinationRouteElements: els,
           getDestinationRouteStatus,
-          expandDestinationRoute: applyExpandedState,
+          expandDestinationRoute: function () {
+            routeState.isExpanded = true;
+            routeState.hasUserSelectedOrigin = false;
+            setCascaderState();
+          },
           collapseDestinationRoute: function () {
+            routeState.isExpanded = false;
             routeState.hasUserSelectedOrigin = true;
-            applyCollapsedState(false);
+            setCascaderState();
           },
           reloadDestinationRouteData: function () {
             routeState.isLoaded = false;
+            routeState.isExpanded = false;
             routeState.hasUserSelectedOrigin = false;
             return loadDestinationRouteData();
           }
