@@ -3081,3 +3081,231 @@
     initTwilinerDestinationRouteSelector();
   }
 })();
+
+
+
+
+/* ==========================================================================
+   Twiliner Destination Route Selector Refinements
+   v26 / D5: Right Line Alignment + Selected Origin Details Height Fix
+   - Gibt dem rechten Destination-Positioner im Expanded-Zustand echte Höhe
+   - Zentriert nur Destination-Target-Item und Icon, nicht den ganzen Wrapper
+   - Rechnet nach Origin-Auswahl die Höhe des selected Origin Items neu
+   - Macht Origin-Adresse/Map nach Auswahl sichtbar
+   ========================================================================== */
+
+(function () {
+  function initTwilinerDestinationRouteRefinements() {
+    const CONFIG = {
+      breakpointMobile: 767,
+      targetTransitionMs: 650,
+      detailsTransitionMs: 360,
+      syncIntervalMs: 250
+    };
+
+    function getDebug() {
+      return window.TwilinerBookingWidgetDebug || null;
+    }
+
+    function getState() {
+      const debug = getDebug();
+      return debug && debug.destinationRouteState ? debug.destinationRouteState : null;
+    }
+
+    function getElements() {
+      const debug = getDebug();
+      return debug && debug.destinationRouteElements ? debug.destinationRouteElements : null;
+    }
+
+    function isMobile() {
+      return window.matchMedia("(max-width: " + CONFIG.breakpointMobile + "px)").matches;
+    }
+
+    function getRenderedOriginItems(elements) {
+      if (!elements || !elements.originList) return [];
+
+      return Array.from(
+        elements.originList.querySelectorAll('[data-booking-destination-origin-rendered="true"]')
+      );
+    }
+
+    function getSelectedOriginItem(state, elements) {
+      if (!state || !state.selectedOrigin || !elements || !elements.originList) return null;
+
+      return getRenderedOriginItems(elements).find(function (item) {
+        return item.getAttribute("data-booking-destination-origin-api-id") === state.selectedOrigin.apiId;
+      }) || null;
+    }
+
+    function getExpandedOriginHeight(elements) {
+      return getRenderedOriginItems(elements).reduce(function (sum, item) {
+        return sum + item.scrollHeight;
+      }, 0);
+    }
+
+    function hasVisibleContent(el) {
+      if (!el) return false;
+
+      const text = el.textContent ? el.textContent.trim() : "";
+      const href = el.getAttribute ? el.getAttribute("href") || "" : "";
+
+      return Boolean(text || (href && href !== "#"));
+    }
+
+    function getDestinationPositioner(elements) {
+      if (!elements || !elements.destinationTargetItem) return null;
+
+      return elements.destinationTargetItem.closest(".cascading-text-positioner");
+    }
+
+    function resetRightAlignment(elements) {
+      if (!elements) return;
+
+      const destinationPositioner = getDestinationPositioner(elements);
+
+      if (destinationPositioner) {
+        destinationPositioner.style.transition = "min-height " + CONFIG.targetTransitionMs + "ms ease-in-out";
+        destinationPositioner.style.minHeight = "";
+      }
+
+      [elements.destinationTargetItem, elements.iconWrapper].forEach(function (el) {
+        if (!el) return;
+
+        el.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
+        el.style.transform = "translateY(0px)";
+      });
+    }
+
+    function syncExpandedRightAlignment() {
+      const state = getState();
+      const elements = getElements();
+
+      if (!state || !elements || !state.isLoaded) return;
+
+      if (isMobile() || !state.isExpanded) {
+        resetRightAlignment(elements);
+        return;
+      }
+
+      const destinationPositioner = getDestinationPositioner(elements);
+      const expandedHeight = getExpandedOriginHeight(elements);
+
+      if (!destinationPositioner || !expandedHeight) return;
+
+      destinationPositioner.style.transition = "min-height " + CONFIG.targetTransitionMs + "ms ease-in-out";
+      destinationPositioner.style.minHeight = expandedHeight + "px";
+
+      if (elements.destinationTargetItem) {
+        const targetHeight = elements.destinationTargetItem.scrollHeight || elements.destinationTargetItem.offsetHeight || 0;
+        const destinationDelta = Math.max(0, (expandedHeight - targetHeight) / 2);
+
+        elements.destinationTargetItem.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
+        elements.destinationTargetItem.style.transform = "translateY(" + destinationDelta + "px)";
+      }
+
+      if (elements.iconWrapper) {
+        const iconHeight = elements.iconWrapper.scrollHeight || elements.iconWrapper.offsetHeight || 0;
+        const iconDelta = Math.max(0, (expandedHeight - iconHeight) / 2);
+
+        elements.iconWrapper.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
+        elements.iconWrapper.style.transform = "translateY(" + iconDelta + "px)";
+      }
+    }
+
+    function revealDetailElement(el) {
+      if (!el || !hasVisibleContent(el)) return;
+
+      el.style.display = "";
+      el.style.overflow = "hidden";
+      el.style.transition =
+        "opacity " + CONFIG.detailsTransitionMs + "ms ease-in-out, " +
+        "transform " + CONFIG.detailsTransitionMs + "ms ease-in-out, " +
+        "max-height " + CONFIG.detailsTransitionMs + "ms ease-in-out";
+
+      el.style.maxHeight = el.scrollHeight + "px";
+      el.style.opacity = "1";
+      el.style.transform = "translateY(0)";
+      el.style.pointerEvents = "auto";
+    }
+
+    function syncSelectedOriginDetails() {
+      const state = getState();
+      const elements = getElements();
+
+      if (!state || !elements || !state.isLoaded) return;
+      if (state.isExpanded) return;
+      if (!state.hasUserSelectedOrigin) return;
+
+      const selectedItem = getSelectedOriginItem(state, elements);
+      if (!selectedItem) return;
+
+      const addressEl = selectedItem.querySelector('[data-booking-destination-origin-address="true"]');
+      const mapEl = selectedItem.querySelector('[data-booking-destination-origin-map="true"]');
+
+      revealDetailElement(addressEl);
+      revealDetailElement(mapEl);
+
+      window.requestAnimationFrame(function () {
+        selectedItem.style.maxHeight = selectedItem.scrollHeight + "px";
+
+        if (elements.originList) {
+          elements.originList.style.maxHeight = selectedItem.scrollHeight + "px";
+        }
+      });
+    }
+
+    function syncDestinationMapPointerEvents() {
+      const elements = getElements();
+      if (!elements) return;
+
+      if (elements.destinationWrapper) {
+        elements.destinationWrapper.style.pointerEvents = "none";
+      }
+
+      if (elements.destinationTargetItem) {
+        elements.destinationTargetItem.style.pointerEvents = "none";
+      }
+
+      if (elements.destinationMap) {
+        elements.destinationMap.style.pointerEvents = "auto";
+      }
+    }
+
+    function syncAll() {
+      syncExpandedRightAlignment();
+      syncSelectedOriginDetails();
+      syncDestinationMapPointerEvents();
+    }
+
+    document.addEventListener("click", function () {
+      window.setTimeout(syncAll, 80);
+      window.setTimeout(syncAll, 450);
+      window.setTimeout(syncAll, 760);
+    }, true);
+
+    window.addEventListener("resize", function () {
+      window.setTimeout(syncAll, 80);
+      window.setTimeout(syncAll, 450);
+    });
+
+    const interval = window.setInterval(syncAll, CONFIG.syncIntervalMs);
+
+    window.TwilinerBookingWidgetDebug = Object.assign(
+      window.TwilinerBookingWidgetDebug || {},
+      {
+        syncDestinationRouteRefinements: syncAll,
+        stopDestinationRouteRefinements: function () {
+          window.clearInterval(interval);
+        }
+      }
+    );
+
+    syncAll();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initTwilinerDestinationRouteRefinements);
+  } else {
+    initTwilinerDestinationRouteRefinements();
+  }
+})();
