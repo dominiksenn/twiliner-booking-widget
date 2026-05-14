@@ -2129,7 +2129,7 @@
 
 /* ==========================================================================
    Twiliner Destination Route Selector
-   v31 / D10 City Station Data + Modal Prefill
+   v32 / D11 City Station Data + Modal Prefill + Date Field Visual Sync
    - Laedt Destination + moegliche Abfahrtsorte via API
    - Rendert Origin-Items dynamisch
    - Liest Bahnhofdaten aus versteckter CMS City Data List
@@ -2139,11 +2139,15 @@
    - Klick auf selected Origin oeffnet Liste wieder
    - Klick auf Address-/Map-Link oeffnet nicht die Liste
    - Hover-State nur auf Origin-Name, nicht beim Hover ueber Address-Link
-   - Mobile: frueherer Scroll-Trigger
    - Button:
      - ohne bewusst gewaehlten Origin: Modal leer
      - mit bewusst gewaehltem Origin: Modal mit Origin + Destination
+   - Modal Date Fields:
+     - leer: beide Datumfelder disabled
+     - Origin + Destination: Abfahrt aktiv, Rueckfahrt disabled
+     - Rueckfahrt aktiv erst nach gewaehlter Hinfahrt
    - Dummy-Inhalte bleiben verborgen, bis echte Daten geladen sind
+   - Motion-Tuning: langsamere und weichere Reveal-/Collapse-Bewegung
    ========================================================================== */
 
 (function () {
@@ -2158,9 +2162,11 @@
       selectedTextColor: "#46288c",
       hoverTextColor: "#eb8096",
       placeholderColor: "",
+      disabledFieldOpacity: "0.46",
+      activeFieldOpacity: "1",
       breakpointMobile: 767,
-      itemTransitionMs: 860,
-      detailTransitionMs: 760,
+      itemTransitionMs: 1080,
+      detailTransitionMs: 940,
       desktopObserverThreshold: 0.68,
       mobileObserverThreshold: 0.34
     };
@@ -2586,7 +2592,7 @@
           --tw-route-ease-soft: cubic-bezier(0.16, 1, 0.3, 1);
           opacity: 0;
           pointer-events: none;
-          transition: opacity 320ms ease-in-out;
+          transition: opacity 360ms ease-in-out;
         }
 
         [data-booking-destination-route="true"] .cascader-wrapper.is-loaded {
@@ -2610,14 +2616,14 @@
         [data-booking-destination-route="true"] .cascading-text-item [data-booking-destination-origin-name="true"],
         [data-booking-destination-route="true"] [data-booking-destination-label-target="true"] {
           color: var(--tw-destination-primary);
-          transition: color 240ms ease-in-out;
+          transition: color 260ms ease-in-out;
         }
 
         [data-booking-destination-route="true"] .cascading-address {
           display: block;
           overflow: hidden;
           opacity: 0;
-          transform: translateY(-0.28rem);
+          transform: translateY(-0.24rem);
           max-height: 0;
           pointer-events: none;
           transition:
@@ -2628,7 +2634,7 @@
 
         [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"]:not(.is-selected) {
           opacity: 0;
-          transform: translateY(-0.38rem);
+          transform: translateY(-0.28rem);
           max-height: 0;
           pointer-events: none;
         }
@@ -2648,14 +2654,14 @@
         }
 
         [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(1) { transition-delay: 0ms; }
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(2) { transition-delay: 45ms; }
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(3) { transition-delay: 90ms; }
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(4) { transition-delay: 135ms; }
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(5) { transition-delay: 180ms; }
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(6) { transition-delay: 225ms; }
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(7) { transition-delay: 270ms; }
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(8) { transition-delay: 315ms; }
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(9) { transition-delay: 360ms; }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(2) { transition-delay: 65ms; }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(3) { transition-delay: 130ms; }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(4) { transition-delay: 195ms; }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(5) { transition-delay: 260ms; }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(6) { transition-delay: 325ms; }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(7) { transition-delay: 390ms; }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(8) { transition-delay: 455ms; }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(9) { transition-delay: 520ms; }
 
         [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected .cascading-address.has-city-data,
         [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-target-wrapper="true"] .cascading-address.has-city-data {
@@ -2663,7 +2669,7 @@
           transform: translateY(0);
           max-height: 8rem;
           pointer-events: auto;
-          transition-delay: 320ms;
+          transition-delay: 420ms;
         }
 
         [data-booking-destination-route="true"] .cascader-wrapper.is-expanded .cascading-address {
@@ -2677,6 +2683,20 @@
         [data-booking-destination-route="true"] [data-booking-destination-map-target="true"],
         [data-booking-destination-route="true"] [data-booking-destination-origin-map="true"] {
           pointer-events: auto;
+        }
+
+        [data-booking-destination-route="true"] .tw-date-disabled {
+          opacity: ${CONFIG.disabledFieldOpacity} !important;
+          pointer-events: none !important;
+          cursor: default !important;
+          transition: opacity 220ms ease-in-out;
+        }
+
+        [data-booking-destination-route="true"] .tw-date-active {
+          opacity: ${CONFIG.activeFieldOpacity} !important;
+          pointer-events: auto !important;
+          cursor: pointer !important;
+          transition: opacity 220ms ease-in-out;
         }
 
         @media screen and (min-width: 768px) {
@@ -2697,7 +2717,7 @@
 
           [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected .cascading-address.has-city-data,
           [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-target-wrapper="true"] .cascading-address.has-city-data {
-            transition-delay: 220ms;
+            transition-delay: 260ms;
           }
         }
       `;
@@ -2899,6 +2919,45 @@
       return source;
     }
 
+    function setFieldVisualState(field, isActive) {
+      if (!field) return;
+
+      field.classList.toggle("tw-date-active", Boolean(isActive));
+      field.classList.toggle("tw-date-disabled", !isActive);
+
+      field.style.pointerEvents = isActive ? "auto" : "none";
+      field.style.opacity = isActive ? CONFIG.activeFieldOpacity : CONFIG.disabledFieldOpacity;
+      field.style.cursor = isActive ? "pointer" : "default";
+    }
+
+    function syncModalDateFieldVisualState() {
+      const debug = window.TwilinerBookingWidgetDebug || {};
+      const modalState = debug.state;
+      const modalEls = debug.elements;
+
+      if (!modalState || !modalEls) return false;
+
+      const hasRoute = Boolean(modalState.selectedOrigin && modalState.selectedDestination);
+      const hasDepartureDate = Boolean(modalState.selectedDepartureDate);
+      const isRoundtrip = modalState.tripType === "roundtrip";
+
+      const departureActive = hasRoute;
+      const returnActive = Boolean(hasRoute && hasDepartureDate && isRoundtrip);
+
+      setFieldVisualState(modalEls.departureField, departureActive);
+      setFieldVisualState(modalEls.returnField, returnActive);
+
+      if (modalEls.departureLabel && !modalState.selectedDepartureDate) {
+        setModalLabel(modalEls.departureLabel, null);
+      }
+
+      if (modalEls.returnLabel && !modalState.selectedReturnDate) {
+        setModalLabel(modalEls.returnLabel, null);
+      }
+
+      return true;
+    }
+
     function resetModalToEmpty() {
       const debug = window.TwilinerBookingWidgetDebug || {};
       const modalState = debug.state;
@@ -2935,16 +2994,6 @@
         modalEls.error.style.display = "none";
       }
 
-      if (modalEls.departureField) {
-        modalEls.departureField.style.pointerEvents = "";
-        modalEls.departureField.style.opacity = "";
-      }
-
-      if (modalEls.returnField) {
-        modalEls.returnField.style.pointerEvents = "";
-        modalEls.returnField.style.opacity = "";
-      }
-
       if (typeof debug.drawCalendar === "function") {
         try {
           debug.drawCalendar("departure");
@@ -2953,6 +3002,8 @@
           // Ignore calendar redraw issues during empty reset.
         }
       }
+
+      syncModalDateFieldVisualState();
 
       return true;
     }
@@ -2982,6 +3033,8 @@
 
       routeState.lastModalPrefillMode = "origin-destination";
 
+      syncModalDateFieldVisualState();
+
       try {
         if (typeof debug.loadDestinationPlaces === "function") {
           await debug.loadDestinationPlaces();
@@ -2993,8 +3046,11 @@
         if (typeof debug.loadDepartureDates === "function") {
           await debug.loadDepartureDates();
         }
+
+        syncModalDateFieldVisualState();
       } catch (error) {
         console.warn("Twiliner destination route modal prefill failed:", error);
+        syncModalDateFieldVisualState();
       }
 
       return true;
@@ -3244,6 +3300,7 @@
           },
           prefillModalFromDestinationRoute: prefillModalWithSelectedRoute,
           resetModalFromDestinationRoute: resetModalToEmpty,
+          syncModalDateFieldVisualState: syncModalDateFieldVisualState,
           reloadDestinationRouteData: function () {
             routeState.isLoaded = false;
             routeState.isExpanded = false;
