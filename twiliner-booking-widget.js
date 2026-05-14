@@ -2129,15 +2129,16 @@
 
 /* ==========================================================================
    Twiliner Destination Route Selector
-   v27 / D6 Clean State-Based Layout
+   v28 / D7 Clean State-Based Layout + Smoother Motion
    - Laedt Destination + moegliche Abfahrtsorte via API
    - Rendert Origin-Items dynamisch
-   - Setzt nur State-Klassen statt Layout-Hoehen zu berechnen
+   - Nutzt State-Klassen statt manueller rechter Hoehen-/Transform-Logik
+   - Smoothere Motion ueber Listenhoehen-Animation + Opacity/Transform
    - Kein translateY fuer Icon/Destination
-   - Kein minHeight/maxHeight fuer Layout-Synchronisierung
-   - Webflow/CSS/Grid uebernimmt Layout und Responsiveness
    - Klick auf selected Origin oeffnet Liste wieder
-   - Klick auf anderen Origin klappt Liste zusammen und zeigt Details
+   - Klick auf Address-/Map-Link oeffnet nicht die Liste
+   - Hover-State nur auf Origin-Name, nicht beim Hover ueber Address-Link
+   - Mobile: frueherer Scroll-Trigger
    ========================================================================== */
 
 (function () {
@@ -2151,7 +2152,12 @@
       apiTimeoutMs: 10000,
       selectedTextColor: "#46288c",
       hoverTextColor: "#eb8096",
-      observerThreshold: 0.68
+      breakpointMobile: 767,
+      listTransitionMs: 780,
+      itemTransitionMs: 680,
+      detailTransitionMs: 620,
+      desktopObserverThreshold: 0.68,
+      mobileObserverThreshold: 0.34
     };
 
     const API_LANGUAGE_MAP = {
@@ -2210,7 +2216,8 @@
       hasUserSelectedOrigin: false,
 
       error: null,
-      observer: null
+      observer: null,
+      isAnimatingList: false
     };
 
     const els = {
@@ -2243,6 +2250,10 @@
       if (path === "/en" || path.startsWith("/en/")) return "en";
 
       return "de";
+    }
+
+    function isMobile() {
+      return window.matchMedia("(max-width: " + CONFIG.breakpointMobile + "px)").matches;
     }
 
     function normalizeLookupKey(input) {
@@ -2419,13 +2430,12 @@
       ]);
 
       elementsToClean.forEach(function (el) {
-        if (!el) return;
-
         [
           "overflow",
           "transition",
           "willChange",
           "maxHeight",
+          "height",
           "minHeight",
           "transform",
           "opacity",
@@ -2443,6 +2453,7 @@
           "transition",
           "willChange",
           "maxHeight",
+          "height",
           "minHeight",
           "transform",
           "opacity",
@@ -2463,6 +2474,7 @@
             "overflow",
             "transition",
             "maxHeight",
+            "height",
             "transform",
             "opacity",
             "pointerEvents",
@@ -2475,159 +2487,225 @@
     }
 
     function injectStateStyles() {
-      if (document.getElementById("twiliner-destination-route-state-styles")) return;
+      const oldStyle = document.getElementById("twiliner-destination-route-state-styles");
+      if (oldStyle) oldStyle.remove();
 
       const style = document.createElement("style");
       style.id = "twiliner-destination-route-state-styles";
 
-style.textContent = `
-  [data-booking-destination-route="true"] .cascader-wrapper {
-    --tw-destination-primary: ${CONFIG.selectedTextColor};
-    --tw-destination-hover: ${CONFIG.hoverTextColor};
-    --tw-route-ease: cubic-bezier(0.22, 1, 0.36, 1);
-    --tw-route-ease-soft: cubic-bezier(0.16, 1, 0.3, 1);
-  }
+      style.textContent = `
+        [data-booking-destination-route="true"] .cascader-wrapper {
+          --tw-destination-primary: ${CONFIG.selectedTextColor};
+          --tw-destination-hover: ${CONFIG.hoverTextColor};
+          --tw-route-ease: cubic-bezier(0.22, 1, 0.36, 1);
+          --tw-route-ease-soft: cubic-bezier(0.16, 1, 0.3, 1);
+        }
 
-  [data-booking-destination-route="true"] .cascading-text-list {
-    overflow: hidden;
-  }
+        [data-booking-destination-route="true"] .cascading-text-list {
+          overflow: hidden;
+          height: auto;
+          transition: height ${CONFIG.listTransitionMs}ms var(--tw-route-ease-soft);
+          will-change: height;
+        }
 
-  [data-booking-destination-route="true"] .cascading-text-item {
-    transition:
-      opacity 720ms var(--tw-route-ease),
-      transform 820ms var(--tw-route-ease),
-      max-height 920ms var(--tw-route-ease-soft);
-    overflow: hidden;
-  }
+        [data-booking-destination-route="true"] .cascading-text-item {
+          overflow: visible;
+          transition:
+            opacity ${CONFIG.itemTransitionMs}ms var(--tw-route-ease),
+            transform ${CONFIG.itemTransitionMs}ms var(--tw-route-ease);
+          will-change: opacity, transform;
+        }
 
-  [data-booking-destination-route="true"] .cascading-text-item [data-booking-destination-origin-name="true"],
-  [data-booking-destination-route="true"] [data-booking-destination-label-target="true"] {
-    color: var(--tw-destination-primary);
-    transition: color 260ms ease-in-out;
-  }
+        [data-booking-destination-route="true"] .cascading-text-item [data-booking-destination-origin-name="true"],
+        [data-booking-destination-route="true"] [data-booking-destination-label-target="true"] {
+          color: var(--tw-destination-primary);
+          transition: color 240ms ease-in-out;
+        }
 
-  [data-booking-destination-route="true"] .cascading-address {
-    display: block;
-    overflow: hidden;
-    opacity: 0;
-    transform: translateY(-0.45rem);
-    max-height: 0;
-    pointer-events: none;
-    transition:
-      opacity 620ms var(--tw-route-ease),
-      transform 700ms var(--tw-route-ease),
-      max-height 760ms var(--tw-route-ease-soft);
-  }
+        [data-booking-destination-route="true"] .cascading-address {
+          display: block;
+          overflow: hidden;
+          opacity: 0;
+          transform: translateY(-0.45rem);
+          max-height: 0;
+          pointer-events: none;
+          transition:
+            opacity ${CONFIG.detailTransitionMs}ms var(--tw-route-ease),
+            transform ${CONFIG.detailTransitionMs}ms var(--tw-route-ease),
+            max-height ${CONFIG.detailTransitionMs}ms var(--tw-route-ease-soft);
+        }
 
-  [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"]:not(.is-selected) {
-    opacity: 0;
-    transform: translateY(-0.8rem);
-    max-height: 0;
-    pointer-events: none;
-  }
+        [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"]:not(.is-selected) {
+          opacity: 0;
+          transform: translateY(-0.75rem);
+          max-height: 0;
+          pointer-events: none;
+        }
 
-  [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected {
-    opacity: 1;
-    transform: translateY(0);
-    max-height: 20rem;
-    pointer-events: auto;
-  }
+        [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected {
+          opacity: 1;
+          transform: translateY(0);
+          max-height: none;
+          pointer-events: auto;
+        }
 
-  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"] {
-    opacity: 1;
-    transform: translateY(0);
-    max-height: 20rem;
-    pointer-events: auto;
-  }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"] {
+          opacity: 1;
+          transform: translateY(0);
+          max-height: none;
+          pointer-events: auto;
+        }
 
-  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(1) {
-    transition-delay: 0ms;
-  }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(1) {
+          transition-delay: 0ms;
+        }
 
-  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(2) {
-    transition-delay: 55ms;
-  }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(2) {
+          transition-delay: 55ms;
+        }
 
-  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(3) {
-    transition-delay: 110ms;
-  }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(3) {
+          transition-delay: 110ms;
+        }
 
-  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(4) {
-    transition-delay: 165ms;
-  }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(4) {
+          transition-delay: 165ms;
+        }
 
-  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(5) {
-    transition-delay: 220ms;
-  }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(5) {
+          transition-delay: 220ms;
+        }
 
-  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(6) {
-    transition-delay: 275ms;
-  }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(6) {
+          transition-delay: 275ms;
+        }
 
-  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(7) {
-    transition-delay: 330ms;
-  }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(7) {
+          transition-delay: 330ms;
+        }
 
-  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(8) {
-    transition-delay: 385ms;
-  }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(8) {
+          transition-delay: 385ms;
+        }
 
-  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(9) {
-    transition-delay: 440ms;
-  }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(9) {
+          transition-delay: 440ms;
+        }
 
-  [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected .cascading-address,
-  [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-target-wrapper="true"] .cascading-address {
-    opacity: 1;
-    transform: translateY(0);
-    max-height: 8rem;
-    pointer-events: auto;
-    transition-delay: 260ms;
-  }
+        [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected .cascading-address,
+        [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-target-wrapper="true"] .cascading-address {
+          opacity: 1;
+          transform: translateY(0);
+          max-height: 8rem;
+          pointer-events: auto;
+          transition-delay: 260ms;
+        }
 
-  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded .cascading-address {
-    transition-delay: 0ms;
-  }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded .cascading-address {
+          transition-delay: 0ms;
+        }
 
-  [data-booking-destination-route="true"] [data-booking-destination-target-wrapper="true"] {
-    pointer-events: none;
-  }
+        [data-booking-destination-route="true"] [data-booking-destination-target-wrapper="true"] {
+          pointer-events: none;
+        }
 
-  [data-booking-destination-route="true"] [data-booking-destination-map-target="true"] {
-    pointer-events: auto;
-  }
+        [data-booking-destination-route="true"] [data-booking-destination-map-target="true"] {
+          pointer-events: auto;
+        }
 
-  @media screen and (min-width: 768px) {
-    [data-booking-destination-route="true"] .cascading-text-item:hover [data-booking-destination-origin-name="true"] {
-      color: var(--tw-destination-hover) !important;
-    }
+        [data-booking-destination-route="true"] [data-booking-destination-origin-map="true"] {
+          pointer-events: auto;
+        }
 
-    [data-booking-destination-route="true"] [data-booking-destination-target-wrapper="true"] .cascading-text-item:hover [data-booking-destination-label-target="true"] {
-      color: var(--tw-destination-primary) !important;
-    }
-  }
+        @media screen and (min-width: 768px) {
+          [data-booking-destination-route="true"] .cascading-text-item.is-name-hover [data-booking-destination-origin-name="true"] {
+            color: var(--tw-destination-hover) !important;
+          }
 
-  @media screen and (max-width: 767px) {
-    [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"],
-    [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected {
-      max-height: 40rem;
-    }
+          [data-booking-destination-route="true"] [data-booking-destination-target-wrapper="true"] .cascading-text-item.is-name-hover [data-booking-destination-label-target="true"] {
+            color: var(--tw-destination-primary) !important;
+          }
+        }
 
-    [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"] {
-      transition-delay: 0ms;
-    }
-  }
-`;
+        @media screen and (max-width: 767px) {
+          [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"] {
+            transition-delay: 0ms;
+          }
+
+          [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected .cascading-address,
+          [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-target-wrapper="true"] .cascading-address {
+            transition-delay: 180ms;
+          }
+        }
+      `;
 
       document.head.appendChild(style);
     }
 
-    function setCascaderState() {
+    function getCurrentListHeight() {
+      if (!els.originList) return 0;
+      return els.originList.getBoundingClientRect().height;
+    }
+
+    function getTargetListHeight(nextExpanded, nextHasSelection) {
+      if (!els.originList || !els.cascader) return 0;
+
+      const previousExpanded = els.cascader.classList.contains("is-expanded");
+      const previousHasSelection = els.cascader.classList.contains("has-selection");
+
+      els.cascader.classList.toggle("is-expanded", nextExpanded);
+      els.cascader.classList.toggle("has-selection", nextHasSelection);
+
+      els.originList.style.height = "auto";
+
+      const height = els.originList.scrollHeight;
+
+      els.cascader.classList.toggle("is-expanded", previousExpanded);
+      els.cascader.classList.toggle("has-selection", previousHasSelection);
+
+      return height;
+    }
+
+    function animateListToState(nextExpanded, nextHasSelection) {
+      if (!els.originList || !els.cascader) {
+        routeState.isExpanded = nextExpanded;
+        routeState.hasUserSelectedOrigin = nextHasSelection;
+        setCascaderState(false);
+        return;
+      }
+
+      const startHeight = getCurrentListHeight();
+      const endHeight = getTargetListHeight(nextExpanded, nextHasSelection);
+
+      routeState.isExpanded = nextExpanded;
+      routeState.hasUserSelectedOrigin = nextHasSelection;
+
+      els.originList.style.height = startHeight + "px";
+      els.originList.offsetHeight;
+
+      setCascaderState(false);
+
+      window.requestAnimationFrame(function () {
+        routeState.isAnimatingList = true;
+        els.originList.style.height = endHeight + "px";
+
+        window.setTimeout(function () {
+          routeState.isAnimatingList = false;
+          els.originList.style.height = "auto";
+        }, CONFIG.listTransitionMs + 40);
+      });
+    }
+
+    function setCascaderState(resetHeight) {
       if (!els.cascader) return;
 
       els.cascader.classList.toggle("is-expanded", routeState.isExpanded);
       els.cascader.classList.toggle("has-selection", routeState.hasUserSelectedOrigin);
       els.cascader.classList.toggle("is-loaded", routeState.isLoaded);
+
+      if (resetHeight && els.originList) {
+        els.originList.style.height = "auto";
+      }
     }
 
     function setDestinationLabel() {
@@ -2662,39 +2740,76 @@ style.textContent = `
       item.setAttribute("role", "button");
       item.setAttribute("tabindex", "0");
 
-      item.classList.remove("is-selected");
+      item.classList.remove("is-selected", "is-name-hover");
 
       const nameEl = item.querySelector('[data-booking-destination-origin-name="true"]');
+      const mapEls = uniqueElements([
+        item.querySelector('[data-booking-destination-origin-address="true"]'),
+        item.querySelector('[data-booking-destination-origin-map="true"]')
+      ]);
+
       if (nameEl) {
         nameEl.textContent = place.label;
+
+        nameEl.addEventListener("mouseenter", function () {
+          if (isMobile()) return;
+          item.classList.add("is-name-hover");
+        });
+
+        nameEl.addEventListener("mouseleave", function () {
+          item.classList.remove("is-name-hover");
+        });
       }
+
+      mapEls.forEach(function (mapEl) {
+        mapEl.addEventListener("mouseenter", function () {
+          item.classList.remove("is-name-hover");
+        });
+
+        mapEl.addEventListener("click", function (event) {
+          event.stopPropagation();
+
+          const href = mapEl.getAttribute("href") || "";
+          if (!href || href === "#") {
+            event.preventDefault();
+          }
+        });
+      });
 
       item.addEventListener("click", function (event) {
         event.preventDefault();
 
+        const clickedMap = event.target.closest('[data-booking-destination-origin-map="true"], [data-booking-destination-origin-address="true"]');
+        if (clickedMap) return;
+
+        const clickedName = event.target.closest('[data-booking-destination-origin-name="true"]');
         const isSelected = routeState.selectedOrigin && routeState.selectedOrigin.apiId === place.apiId;
 
-        if (isSelected && !routeState.isExpanded && routeState.hasUserSelectedOrigin) {
-          routeState.isExpanded = true;
-          routeState.hasUserSelectedOrigin = false;
-          setCascaderState();
-          updateSelectedOriginVisual();
+        if (isSelected && !routeState.isExpanded && clickedName) {
+          animateListToState(true, false);
           return;
         }
 
         routeState.selectedOrigin = place;
-        routeState.isExpanded = false;
-        routeState.hasUserSelectedOrigin = true;
-
-        setCascaderState();
         updateSelectedOriginVisual();
+        animateListToState(false, true);
       });
 
       item.addEventListener("keydown", function (event) {
         if (event.key !== "Enter" && event.key !== " ") return;
 
         event.preventDefault();
-        item.click();
+
+        const isSelected = routeState.selectedOrigin && routeState.selectedOrigin.apiId === place.apiId;
+
+        if (isSelected && !routeState.isExpanded) {
+          animateListToState(true, false);
+          return;
+        }
+
+        routeState.selectedOrigin = place;
+        updateSelectedOriginVisual();
+        animateListToState(false, true);
       });
 
       return item;
@@ -2710,6 +2825,10 @@ style.textContent = `
       });
 
       updateSelectedOriginVisual();
+
+      window.requestAnimationFrame(function () {
+        setCascaderState(true);
+      });
     }
 
     function getRenderedOriginItems() {
@@ -2827,7 +2946,7 @@ style.textContent = `
         routeState.hasUserSelectedOrigin = false;
 
         resetInlineStyles();
-        setCascaderState();
+        setCascaderState(true);
         updateSelectedOriginVisual();
         initObserver();
       } catch (error) {
@@ -2842,20 +2961,27 @@ style.textContent = `
       if (!("IntersectionObserver" in window)) return;
       if (routeState.observer) routeState.observer.disconnect();
 
+      const threshold = isMobile()
+        ? CONFIG.mobileObserverThreshold
+        : CONFIG.desktopObserverThreshold;
+
+      const rootMargin = isMobile()
+        ? "0px 0px -8% 0px"
+        : "0px 0px -24% 0px";
+
       routeState.observer = new IntersectionObserver(function (entries) {
         entries.forEach(function (entry) {
           if (!entry.isIntersecting) return;
-          if (entry.intersectionRatio < CONFIG.observerThreshold) return;
+          if (entry.intersectionRatio < threshold) return;
           if (routeState.hasUserSelectedOrigin) return;
           if (routeState.isExpanded) return;
 
-          routeState.isExpanded = true;
-          setCascaderState();
+          animateListToState(true, false);
         });
       }, {
         root: null,
-        rootMargin: "0px 0px -24% 0px",
-        threshold: [0, 0.25, 0.45, CONFIG.observerThreshold, 0.85, 1]
+        rootMargin,
+        threshold: [0, 0.25, threshold, 0.85, 1]
       });
 
       routeState.observer.observe(root);
@@ -2886,6 +3012,7 @@ style.textContent = `
         isLoaded: routeState.isLoaded,
         isExpanded: routeState.isExpanded,
         hasUserSelectedOrigin: routeState.hasUserSelectedOrigin,
+        isAnimatingList: routeState.isAnimatingList,
 
         error: routeState.error,
 
@@ -2915,14 +3042,10 @@ style.textContent = `
           destinationRouteElements: els,
           getDestinationRouteStatus,
           expandDestinationRoute: function () {
-            routeState.isExpanded = true;
-            routeState.hasUserSelectedOrigin = false;
-            setCascaderState();
+            animateListToState(true, false);
           },
           collapseDestinationRoute: function () {
-            routeState.isExpanded = false;
-            routeState.hasUserSelectedOrigin = true;
-            setCascaderState();
+            animateListToState(false, true);
           },
           reloadDestinationRouteData: function () {
             routeState.isLoaded = false;
