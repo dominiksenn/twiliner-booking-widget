@@ -2129,7 +2129,7 @@
 
 /* ==========================================================================
    Twiliner Destination Route Selector
-   v30 / D9 City Station Data + Softer Motion
+   v31 / D10 City Station Data + Modal Prefill
    - Laedt Destination + moegliche Abfahrtsorte via API
    - Rendert Origin-Items dynamisch
    - Liest Bahnhofdaten aus versteckter CMS City Data List
@@ -2140,7 +2140,10 @@
    - Klick auf Address-/Map-Link oeffnet nicht die Liste
    - Hover-State nur auf Origin-Name, nicht beim Hover ueber Address-Link
    - Mobile: frueherer Scroll-Trigger
-   - Motion-Tuning: weichere Reveal-/Collapse-Bewegung
+   - Button:
+     - ohne bewusst gewaehlten Origin: Modal leer
+     - mit bewusst gewaehltem Origin: Modal mit Origin + Destination
+   - Dummy-Inhalte bleiben verborgen, bis echte Daten geladen sind
    ========================================================================== */
 
 (function () {
@@ -2154,6 +2157,7 @@
       apiTimeoutMs: 10000,
       selectedTextColor: "#46288c",
       hoverTextColor: "#eb8096",
+      placeholderColor: "",
       breakpointMobile: 767,
       itemTransitionMs: 860,
       detailTransitionMs: 760,
@@ -2164,6 +2168,15 @@
     const API_LANGUAGE_MAP = {
       de: "de",
       en: "en"
+    };
+
+    const TEXT = {
+      de: {
+        choose: "Bitte wählen"
+      },
+      en: {
+        choose: "Please select"
+      }
     };
 
     const LEGACY_CITY_CODE_MAP = {
@@ -2213,6 +2226,8 @@
       isExpanded: false,
       hasUserSelectedOrigin: false,
 
+      lastModalPrefillMode: null,
+
       error: null,
       observer: null
     };
@@ -2246,6 +2261,10 @@
       if (path === "/en" || path.startsWith("/en/")) return "en";
 
       return "de";
+    }
+
+    function getLabels() {
+      return TEXT[routeState.language] || TEXT.de;
     }
 
     function isMobile() {
@@ -2565,6 +2584,14 @@
           --tw-destination-hover: ${CONFIG.hoverTextColor};
           --tw-route-ease: cubic-bezier(0.22, 1, 0.36, 1);
           --tw-route-ease-soft: cubic-bezier(0.16, 1, 0.3, 1);
+          opacity: 0;
+          pointer-events: none;
+          transition: opacity 320ms ease-in-out;
+        }
+
+        [data-booking-destination-route="true"] .cascader-wrapper.is-loaded {
+          opacity: 1;
+          pointer-events: auto;
         }
 
         [data-booking-destination-route="true"] .cascading-text-list {
@@ -2620,41 +2647,15 @@
           pointer-events: auto;
         }
 
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(1) {
-          transition-delay: 0ms;
-        }
-
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(2) {
-          transition-delay: 45ms;
-        }
-
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(3) {
-          transition-delay: 90ms;
-        }
-
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(4) {
-          transition-delay: 135ms;
-        }
-
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(5) {
-          transition-delay: 180ms;
-        }
-
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(6) {
-          transition-delay: 225ms;
-        }
-
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(7) {
-          transition-delay: 270ms;
-        }
-
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(8) {
-          transition-delay: 315ms;
-        }
-
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(9) {
-          transition-delay: 360ms;
-        }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(1) { transition-delay: 0ms; }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(2) { transition-delay: 45ms; }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(3) { transition-delay: 90ms; }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(4) { transition-delay: 135ms; }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(5) { transition-delay: 180ms; }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(6) { transition-delay: 225ms; }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(7) { transition-delay: 270ms; }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(8) { transition-delay: 315ms; }
+        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(9) { transition-delay: 360ms; }
 
         [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected .cascading-address.has-city-data,
         [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-target-wrapper="true"] .cascading-address.has-city-data {
@@ -2870,6 +2871,147 @@
       });
     }
 
+    function setModalLabel(el, value) {
+      if (!el) return;
+
+      el.textContent = value || getLabels().choose;
+
+      if (value) {
+        el.style.color = CONFIG.selectedTextColor;
+      } else {
+        el.style.color = CONFIG.placeholderColor;
+      }
+    }
+
+    function clearMapOrSet(target, source) {
+      if (!target) return source;
+
+      if (target instanceof Map) {
+        target.clear();
+        return target;
+      }
+
+      if (target instanceof Set) {
+        target.clear();
+        return target;
+      }
+
+      return source;
+    }
+
+    function resetModalToEmpty() {
+      const debug = window.TwilinerBookingWidgetDebug || {};
+      const modalState = debug.state;
+      const modalEls = debug.elements;
+
+      if (!modalState || !modalEls) return false;
+
+      modalState.selectedOrigin = null;
+      modalState.selectedDestination = null;
+      modalState.selectedDepartureDate = null;
+      modalState.selectedReturnDate = null;
+
+      modalState.destinationPlaces = [];
+      modalState.destinationLoaded = false;
+      modalState.departureDatesLoaded = false;
+      modalState.returnDatesLoaded = false;
+
+      modalState.departureDates = clearMapOrSet(modalState.departureDates, new Set());
+      modalState.returnDates = clearMapOrSet(modalState.returnDates, new Set());
+      modalState.departurePrices = clearMapOrSet(modalState.departurePrices, new Map());
+      modalState.returnPrices = clearMapOrSet(modalState.returnPrices, new Map());
+      modalState.departureCheapDates = clearMapOrSet(modalState.departureCheapDates, new Set());
+      modalState.returnCheapDates = clearMapOrSet(modalState.returnCheapDates, new Set());
+
+      modalState.openPanel = null;
+
+      setModalLabel(modalEls.originLabel, null);
+      setModalLabel(modalEls.destinationLabel, null);
+      setModalLabel(modalEls.departureLabel, null);
+      setModalLabel(modalEls.returnLabel, null);
+
+      if (modalEls.error) {
+        modalEls.error.textContent = "";
+        modalEls.error.style.display = "none";
+      }
+
+      if (modalEls.departureField) {
+        modalEls.departureField.style.pointerEvents = "";
+        modalEls.departureField.style.opacity = "";
+      }
+
+      if (modalEls.returnField) {
+        modalEls.returnField.style.pointerEvents = "";
+        modalEls.returnField.style.opacity = "";
+      }
+
+      if (typeof debug.drawCalendar === "function") {
+        try {
+          debug.drawCalendar("departure");
+          debug.drawCalendar("return");
+        } catch (_) {
+          // Ignore calendar redraw issues during empty reset.
+        }
+      }
+
+      return true;
+    }
+
+    async function prefillModalWithSelectedRoute() {
+      const debug = window.TwilinerBookingWidgetDebug || {};
+      const modalState = debug.state;
+      const modalEls = debug.elements;
+
+      if (!modalState || !modalEls) return false;
+      if (!routeState.hasUserSelectedOrigin || !routeState.selectedOrigin || !routeState.currentDestination) {
+        return resetModalToEmpty();
+      }
+
+      resetModalToEmpty();
+
+      modalState.selectedOrigin = routeState.selectedOrigin;
+      modalState.selectedDestination = routeState.currentDestination;
+
+      setModalLabel(modalEls.originLabel, routeState.selectedOrigin.label);
+      setModalLabel(modalEls.destinationLabel, routeState.currentDestination.label);
+
+      if (modalEls.error) {
+        modalEls.error.textContent = "";
+        modalEls.error.style.display = "none";
+      }
+
+      routeState.lastModalPrefillMode = "origin-destination";
+
+      try {
+        if (typeof debug.loadDestinationPlaces === "function") {
+          await debug.loadDestinationPlaces();
+        }
+
+        modalState.selectedDestination = routeState.currentDestination;
+        setModalLabel(modalEls.destinationLabel, routeState.currentDestination.label);
+
+        if (typeof debug.loadDepartureDates === "function") {
+          await debug.loadDepartureDates();
+        }
+      } catch (error) {
+        console.warn("Twiliner destination route modal prefill failed:", error);
+      }
+
+      return true;
+    }
+
+    function handleSubmitClick(event) {
+      event.preventDefault();
+
+      if (!routeState.hasUserSelectedOrigin) {
+        routeState.lastModalPrefillMode = "empty";
+        resetModalToEmpty();
+        return;
+      }
+
+      prefillModalWithSelectedRoute();
+    }
+
     function isArrivalAvailableForDestination(arrivalPayload) {
       if (!Array.isArray(arrivalPayload)) return false;
 
@@ -2966,11 +3108,16 @@
         routeState.isLoaded = true;
         routeState.isExpanded = false;
         routeState.hasUserSelectedOrigin = false;
+        routeState.lastModalPrefillMode = null;
 
         resetInlineStyles();
         setCascaderState();
         updateSelectedOriginVisual();
         initObserver();
+
+        if (els.submit) {
+          els.submit.addEventListener("click", handleSubmitClick);
+        }
       } catch (error) {
         console.error("Twiliner destination route error:", error);
         routeState.error = error;
@@ -3018,6 +3165,18 @@
         ? getCityData(routeState.currentDestination.apiId)
         : null;
 
+      const nextSubmitPrefill = routeState.hasUserSelectedOrigin && routeState.selectedOrigin && routeState.currentDestination
+        ? {
+            mode: "origin-destination",
+            origin: routeState.selectedOrigin,
+            destination: routeState.currentDestination
+          }
+        : {
+            mode: "empty",
+            origin: null,
+            destination: null
+          };
+
       return {
         language: routeState.language,
         currentDestinationApiId: routeState.currentDestinationApiId,
@@ -3047,6 +3206,8 @@
         isLoaded: routeState.isLoaded,
         isExpanded: routeState.isExpanded,
         hasUserSelectedOrigin: routeState.hasUserSelectedOrigin,
+        lastModalPrefillMode: routeState.lastModalPrefillMode,
+        nextSubmitPrefill: nextSubmitPrefill,
 
         error: routeState.error,
 
@@ -3081,6 +3242,8 @@
           collapseDestinationRoute: function () {
             setRouteState(false, true);
           },
+          prefillModalFromDestinationRoute: prefillModalWithSelectedRoute,
+          resetModalFromDestinationRoute: resetModalToEmpty,
           reloadDestinationRouteData: function () {
             routeState.isLoaded = false;
             routeState.isExpanded = false;
