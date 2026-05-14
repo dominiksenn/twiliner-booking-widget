@@ -2129,16 +2129,20 @@
 
 /* ==========================================================================
    Twiliner Destination Route Selector
-   v24 / D3: Destination Page Route Data + Smooth Expand/Collapse
+   v25 / D4: Smooth Expand/Collapse Refinements
    - Liest aktuelle Destination API ID aus dem CMS-Attribut
    - Lädt alle möglichen Abfahrtsorte via API
    - Prüft pro Abfahrtsort, ob die aktuelle Destination angefahren wird
    - Rendert die möglichen Abfahrtsorte in die Origin-Liste
    - Setzt den ersten verfügbaren Abfahrtsort als Default
-   - Setzt das Destination-Label aus API-Daten
    - Initial nur ein Abfahrtsort sichtbar
-   - Expanded per IntersectionObserver
-   - Click auf Origin collapsed die Liste wieder smooth
+   - Expanded per IntersectionObserver, später ausgelöst
+   - Click auf Origin collapsed die Liste smooth
+   - Click auf sichtbaren selected Origin öffnet die Liste wieder
+   - Destination-Wrapper bleibt oben/unten ausgerichtet
+   - Nur Destination-Target-Item und Icon werden vertikal zentriert
+   - Origin- und Destination-Details erscheinen nach Auswahl
+   - Desktop-Hover auf Origins: #eb8096
    - Icon wird nie überschrieben, nur der Wrapper bewegt
    ========================================================================== */
 
@@ -2152,12 +2156,13 @@
       operatorId: "a0cf1341-a01b-449d-b91f-17a1b4f84c44",
       apiTimeoutMs: 10000,
       selectedTextColor: "#46288c",
+      hoverTextColor: "#eb8096",
       breakpointMobile: 767,
       listTransitionMs: 650,
       itemTransitionMs: 520,
       itemStaggerMs: 70,
       targetTransitionMs: 650,
-      observerThreshold: 0.45
+      observerThreshold: 0.62
     };
 
     const API_LANGUAGE_MAP = {
@@ -2232,6 +2237,7 @@
       originTemplate: root.querySelector('[data-booking-destination-origin-template="true"]'),
 
       destinationWrapper: root.querySelector('[data-booking-destination-target-wrapper="true"]'),
+      destinationTargetItem: root.querySelector('[data-booking-destination-target-item="true"]'),
       destinationLabel: root.querySelector('[data-booking-destination-label-target="true"]'),
       destinationAddress: root.querySelector('[data-booking-destination-address-target="true"]'),
       destinationMap: root.querySelector('[data-booking-destination-map-target="true"]'),
@@ -2241,6 +2247,8 @@
 
       submit: root.querySelector('[data-booking-destination-submit="true"]')
     };
+
+    els.originWrapper = els.originList ? els.originList.closest(".cascading-text-wrapper") : null;
 
     const templateClone = els.originTemplate ? els.originTemplate.cloneNode(true) : null;
 
@@ -2441,15 +2449,27 @@
         els.destinationWrapper.style.pointerEvents = "none";
       }
 
+      if (els.destinationTargetItem) {
+        els.destinationTargetItem.style.pointerEvents = "none";
+      }
+
       if (els.destinationMap) {
         els.destinationMap.style.pointerEvents = "auto";
       }
+    }
+
+    function hasUsefulMapHref(el) {
+      if (!el) return false;
+
+      const href = el.getAttribute("href") || "";
+      return href && href !== "#";
     }
 
     function hideDestinationDetails(instant) {
       [els.destinationAddress, els.destinationMap].forEach(function (el) {
         if (!el) return;
 
+        el.style.display = "";
         el.style.overflow = "hidden";
         el.style.transition = instant
           ? "none"
@@ -2465,6 +2485,11 @@
     function showDestinationDetails() {
       [els.destinationAddress, els.destinationMap].forEach(function (el) {
         if (!el) return;
+
+        const hasText = Boolean(el.textContent.trim());
+        const hasHref = hasUsefulMapHref(el);
+
+        if (!hasText && !hasHref) return;
 
         el.style.display = "";
         el.style.overflow = "hidden";
@@ -2520,37 +2545,66 @@
       if (nameEl) {
         nameEl.textContent = place.label;
         nameEl.style.color = CONFIG.selectedTextColor;
+        nameEl.style.transition = "color 220ms ease-in-out";
       }
 
-      if (addressEl) {
-        addressEl.style.overflow = "hidden";
-        addressEl.style.opacity = "0";
-        addressEl.style.transform = "translateY(-0.35rem)";
-        addressEl.style.maxHeight = "0px";
-        addressEl.style.pointerEvents = "none";
-        addressEl.style.transition = "opacity 320ms ease-in-out, transform 320ms ease-in-out, max-height 320ms ease-in-out";
-      }
+      [addressEl, mapEl].forEach(function (el) {
+        if (!el) return;
 
-      if (mapEl) {
-        mapEl.setAttribute("href", "#");
-        mapEl.style.overflow = "hidden";
-        mapEl.style.opacity = "0";
-        mapEl.style.transform = "translateY(-0.35rem)";
-        mapEl.style.maxHeight = "0px";
-        mapEl.style.pointerEvents = "none";
-        mapEl.style.transition = "opacity 320ms ease-in-out, transform 320ms ease-in-out, max-height 320ms ease-in-out";
-      }
+        el.style.display = "";
+        el.style.overflow = "hidden";
+        el.style.opacity = "0";
+        el.style.transform = "translateY(-0.35rem)";
+        el.style.maxHeight = "0px";
+        el.style.pointerEvents = "none";
+        el.style.transition = "opacity 320ms ease-in-out, transform 320ms ease-in-out, max-height 320ms ease-in-out";
+      });
+
+      item.addEventListener("mouseenter", function () {
+        if (isMobile()) return;
+        if (!nameEl) return;
+
+        nameEl.style.color = CONFIG.hoverTextColor;
+      });
+
+      item.addEventListener("mouseleave", function () {
+        if (!nameEl) return;
+
+        nameEl.style.color = CONFIG.selectedTextColor;
+      });
 
       item.addEventListener("click", function (event) {
         event.preventDefault();
+
+        const isSelected = routeState.selectedOrigin && routeState.selectedOrigin.apiId === place.apiId;
+
+        if (isSelected && !routeState.isExpanded && routeState.hasUserSelectedOrigin) {
+          routeState.hasUserSelectedOrigin = false;
+          hideOriginDetails(item, false);
+          hideDestinationDetails(false);
+          applyExpandedState();
+          return;
+        }
+
         selectOrigin(place, true);
       });
 
       item.addEventListener("keydown", function (event) {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          selectOrigin(place, true);
+        if (event.key !== "Enter" && event.key !== " ") return;
+
+        event.preventDefault();
+
+        const isSelected = routeState.selectedOrigin && routeState.selectedOrigin.apiId === place.apiId;
+
+        if (isSelected && !routeState.isExpanded && routeState.hasUserSelectedOrigin) {
+          routeState.hasUserSelectedOrigin = false;
+          hideOriginDetails(item, false);
+          hideDestinationDetails(false);
+          applyExpandedState();
+          return;
         }
+
+        selectOrigin(place, true);
       });
 
       return item;
@@ -2621,18 +2675,45 @@
       return selectedItem ? selectedItem.scrollHeight : 0;
     }
 
+    function getTargetDeltaForExpanded() {
+      if (isMobile()) return 0;
+
+      const expandedHeight = getExpandedListHeight();
+      const collapsedHeight = getCollapsedListHeight();
+
+      return Math.max(0, (expandedHeight - collapsedHeight) / 2);
+    }
+
+    function setRightColumnHeightForExpanded() {
+      if (!els.destinationWrapper) return;
+
+      if (isMobile()) {
+        els.destinationWrapper.style.minHeight = "";
+        return;
+      }
+
+      if (els.originWrapper) {
+        els.destinationWrapper.style.transition = "min-height " + CONFIG.targetTransitionMs + "ms ease-in-out";
+        els.destinationWrapper.style.minHeight = els.originWrapper.scrollHeight + "px";
+      }
+    }
+
+    function resetRightColumnHeight() {
+      if (!els.destinationWrapper) return;
+
+      els.destinationWrapper.style.transition = "min-height " + CONFIG.targetTransitionMs + "ms ease-in-out";
+      els.destinationWrapper.style.minHeight = "";
+    }
+
     function setTargetTransformForExpanded() {
       if (isMobile()) {
         resetTargetTransform();
         return;
       }
 
-      const expandedHeight = getExpandedListHeight();
-      const collapsedHeight = getCollapsedListHeight();
+      const delta = getTargetDeltaForExpanded();
 
-      const delta = Math.max(0, (expandedHeight - collapsedHeight) / 2);
-
-      [els.iconWrapper, els.destinationWrapper].forEach(function (el) {
+      [els.iconWrapper, els.destinationTargetItem].forEach(function (el) {
         if (!el) return;
 
         el.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
@@ -2642,7 +2723,7 @@
     }
 
     function resetTargetTransform() {
-      [els.iconWrapper, els.destinationWrapper].forEach(function (el) {
+      [els.iconWrapper, els.destinationTargetItem].forEach(function (el) {
         if (!el) return;
 
         el.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
@@ -2679,7 +2760,10 @@
       [addressEl, mapEl].forEach(function (el) {
         if (!el) return;
 
-        if (!el.textContent.trim()) return;
+        const hasText = Boolean(el.textContent.trim());
+        const hasHref = hasUsefulMapHref(el);
+
+        if (!hasText && !hasHref) return;
 
         el.style.transition = "opacity 360ms ease-in-out, transform 360ms ease-in-out, max-height 360ms ease-in-out";
         el.style.maxHeight = el.scrollHeight + "px";
@@ -2706,6 +2790,7 @@
       hideAllOriginDetails(instant);
       hideDestinationDetails(instant);
       resetTargetTransform();
+      resetRightColumnHeight();
 
       items.forEach(function (item) {
         const isSelected = item === selectedItem;
@@ -2726,15 +2811,18 @@
       if (routeState.hasUserSelectedOrigin && !instant) {
         window.setTimeout(function () {
           const latestSelected = getSelectedOriginItem();
+
           showOriginDetails(latestSelected);
           showDestinationDetails();
-        }, CONFIG.listTransitionMs * 0.7);
+
+          if (latestSelected && els.originList) {
+            els.originList.style.maxHeight = latestSelected.scrollHeight + "px";
+          }
+        }, CONFIG.listTransitionMs * 0.72);
       }
     }
 
     function applyExpandedState() {
-      if (routeState.hasUserSelectedOrigin) return;
-
       routeState.isExpanded = true;
 
       const items = getRenderedOriginItems();
@@ -2745,6 +2833,8 @@
 
       const expandedHeight = getExpandedListHeight();
       els.originList.style.maxHeight = expandedHeight + "px";
+
+      setRightColumnHeightForExpanded();
 
       items.forEach(function (item, index) {
         item.style.transition =
@@ -2759,7 +2849,9 @@
         item.style.pointerEvents = "auto";
       });
 
-      setTargetTransformForExpanded();
+      window.requestAnimationFrame(function () {
+        setTargetTransformForExpanded();
+      });
     }
 
     function selectOrigin(place, collapseAfterSelection) {
@@ -2889,7 +2981,9 @@
           applyExpandedState();
         });
       }, {
-        threshold: [0, 0.25, CONFIG.observerThreshold, 0.75, 1]
+        root: null,
+        rootMargin: "0px 0px -18% 0px",
+        threshold: [0, 0.25, 0.45, CONFIG.observerThreshold, 0.85, 1]
       });
 
       routeState.observer.observe(root);
@@ -2929,6 +3023,7 @@
           originTemplate: Boolean(els.originTemplate),
           destinationLabel: Boolean(els.destinationLabel),
           destinationWrapper: Boolean(els.destinationWrapper),
+          destinationTargetItem: Boolean(els.destinationTargetItem),
           destinationAddress: Boolean(els.destinationAddress),
           destinationMap: Boolean(els.destinationMap),
           iconWrapper: Boolean(els.iconWrapper),
