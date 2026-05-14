@@ -2143,7 +2143,7 @@
      - ohne bewusst gewaehlten Origin: Modal leer
      - mit bewusst gewaehltem Origin: Modal mit Origin + Destination
    - Modal Date Fields:
-     - keine eigene Date-Field-Visual-Logik mehr
+     - keine eigene Date-Field-Visual-Logik
      - normales Booking Modal steuert Fehler, Klickbarkeit und Feldstatus selbst
    - Modal Panels:
      - offene Dropdowns/Kalender werden defensiv geschlossen
@@ -2971,28 +2971,6 @@
       setModalLabel(modalEls.destinationLabel, null);
       setModalLabel(modalEls.departureLabel, null);
       setModalLabel(modalEls.returnLabel, null);
-
-      [
-  modalEls.departureField,
-  modalEls.returnField
-].forEach(function (field) {
-  if (!field) return;
-
-  field.classList.remove("is-active", "is-selected", "is-open", "tw-date-active", "tw-date-disabled");
-  field.style.pointerEvents = "";
-  field.style.opacity = "";
-  field.style.cursor = "";
-});
-
-[
-  modalEls.departureLabel,
-  modalEls.returnLabel
-].forEach(function (label) {
-  if (!label) return;
-
-  label.classList.remove("is-active", "is-selected", "is-open");
-  label.style.color = CONFIG.placeholderColor;
-});
 
       if (modalEls.error) {
         modalEls.error.textContent = "";
