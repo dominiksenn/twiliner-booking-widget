@@ -2125,1256 +2125,21 @@
 })();
 
 
-/* ==========================================================================
-   Twiliner Hero Route Selector
-   v20 / H8: Hero Fallback Visual Fix + No Dates Message
-   - Lädt Abfahrtsorte via API
-   - Lädt Ankunftsorte abhängig vom gewählten Abfahrtsort via API
-   - Öffnet Hero-Dropups animiert von unten nach oben
-   - Schreibt Optionen in .dropup-list-content
-   - Übernimmt Webflow-Klassen vom bestehenden Beispielitem
-   - Übergibt Hero-Auswahl an das bestehende Booking Modal
-   - Öffnet den Kalender NICHT automatisch
-   - Hero-Fallback bei API-Fehler: Felder bleiben ausgegraut, Button bleibt aktiv
-   - Zeigt Modal-Fehler, wenn für eine Route keine buchbaren Hinfahrtdaten verfügbar sind
-   ========================================================================== */
-
-(function () {
-  function initTwilinerHeroRouteSelector() {
-    const hero = document.querySelector('[data-booking-hero="true"]');
-    if (!hero) return;
-
-    const CONFIG = {
-      apiBaseUrl: "https://data.nightride.com/api",
-      bookingBaseUrl: "https://booking.twiliner.com/",
-      operatorId: "a0cf1341-a01b-449d-b91f-17a1b4f84c44",
-      apiTimeoutMs: 10000,
-      panelTransitionMs: 300,
-      selectedTextColor: "#46288c",
-      modalPrefillDelayMs: 450,
-      trackingStorageKey: "twiliner_booking_url_params"
-    };
-
-    const TEXT = {
-      de: {
-        choose: "Bitte wählen",
-        chooseDate: "Datum",
-        loading: "Wird geladen...",
-        noDepartures: "Keine Abfahrtsorte verfügbar",
-        noDestinations: "Keine Ankunftsorte verfügbar",
-        selectOriginFirst: "Bitte wähle zuerst einen Abfahrtsort.",
-        noBookableDates: "Für diese Verbindung sind aktuell keine Reisedaten verfügbar.",
-        fallbackMessage: "Das Buchungstool wird direkt geöffnet."
-      },
-      en: {
-        choose: "Please select",
-        chooseDate: "Date",
-        loading: "Loading...",
-        noDepartures: "No departure places available",
-        noDestinations: "No arrival places available",
-        selectOriginFirst: "Please select a departure place first.",
-        noBookableDates: "There are currently no travel dates available for this connection.",
-        fallbackMessage: "The booking tool will open directly."
-      }
-    };
-
-    const API_LANGUAGE_MAP = {
-      de: "de",
-      en: "en"
-    };
-
-    const LEGACY_CITY_CODE_MAP = {
-      zurich: "001",
-      zuerich: "001",
-      zurigo: "001",
-
-      bern: "002",
-      berne: "002",
-
-      basel: "012",
-
-      girona: "004",
-      barcelona: "005",
-      amsterdam: "006",
-      rotterdam: "008",
-
-      brussels: "009",
-      brussel: "009",
-      bruxelles: "009",
-
-      luxembourg: "010",
-      luxemburg: "010"
-    };
-
-    const TURNIT_CITY_NAME_BY_LEGACY_CODE = {
-      "001": "Zurich",
-      "002": "Bern",
-      "012": "Basel",
-      "004": "Girona",
-      "005": "Barcelona",
-      "006": "Amsterdam",
-      "008": "Rotterdam",
-      "009": "Brussels",
-      "010": "Luxembourg"
-    };
-
-    const TURNIT_PROTECTED_PARAMS = new Set([
-      "origin",
-      "destination",
-      "departureDate",
-      "returnDate",
-      "passengers",
-      "productType",
-      "language"
-    ]);
-
-    const heroState = {
-      language: getCurrentLanguage(),
-
-      selectedOrigin: null,
-      selectedDestination: null,
-
-      originPlaces: [],
-      destinationPlaces: [],
-
-      originLoaded: false,
-      destinationLoaded: false,
-
-      isLoadingOrigins: false,
-      isLoadingDestinations: false,
-
-      apiUnavailable: false,
-      fallbackReason: null,
-      simulateApiFailureStage: null,
-
-      openPanel: null,
-
-      itemClasses: {
-        origin: null,
-        destination: null
-      }
-    };
-
-    const labels = TEXT[heroState.language] || TEXT.de;
-
-    const els = {
-      originField: hero.querySelector('[data-booking-hero-field="origin"]'),
-      originLabel: hero.querySelector('[data-booking-hero-label="origin"]'),
-      originDropdown: hero.querySelector('[data-booking-hero-dropdown="origin"]'),
-
-      destinationField: hero.querySelector('[data-booking-hero-field="destination"]'),
-      destinationLabel: hero.querySelector('[data-booking-hero-label="destination"]'),
-      destinationDropdown: hero.querySelector('[data-booking-hero-dropdown="destination"]'),
-
-      submit: hero.querySelector('[data-booking-hero-submit="true"]'),
-      error: hero.querySelector('[data-booking-hero-error="true"]')
-    };
-
-    function getCurrentLanguage() {
-      const htmlLang = (document.documentElement.getAttribute("lang") || "").toLowerCase();
-
-      if (htmlLang.startsWith("en")) return "en";
-      if (htmlLang.startsWith("de")) return "de";
-
-      const path = window.location.pathname.toLowerCase();
-
-      if (path === "/en" || path.startsWith("/en/")) return "en";
-
-      return "de";
-    }
-
-    function normalizeLookupKey(input) {
-      return String(input || "")
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, " ")
-        .trim();
-    }
-
-    function stripTrailingCountryCode(label) {
-      return String(label || "").replace(/\s*\([A-Z]{2}\)\s*$/, "");
-    }
-
-    function getLegacyCodeForPlace(place, cleanedLabel) {
-      const lookupKeys = [
-        normalizeLookupKey(cleanedLabel),
-        normalizeLookupKey(place.label),
-        normalizeLookupKey(place.name),
-        normalizeLookupKey(place.name_de),
-        normalizeLookupKey(place.name_en),
-        normalizeLookupKey(place.name_fr),
-        normalizeLookupKey(place.key)
-      ].filter(Boolean);
-
-      for (let i = 0; i < lookupKeys.length; i += 1) {
-        if (LEGACY_CITY_CODE_MAP[lookupKeys[i]]) {
-          return LEGACY_CITY_CODE_MAP[lookupKeys[i]];
-        }
-      }
-
-      return null;
-    }
-
-    function getTurnitCityName(place, cleanedLabel, legacyCode) {
-      if (legacyCode && TURNIT_CITY_NAME_BY_LEGACY_CODE[legacyCode]) {
-        return TURNIT_CITY_NAME_BY_LEGACY_CODE[legacyCode];
-      }
-
-      return (
-        place.name_en ||
-        place.key ||
-        place.name ||
-        cleanedLabel ||
-        place.label ||
-        ""
-      );
-    }
-
-    function mapPlace(place) {
-      const cleanedLabel = stripTrailingCountryCode(place.label);
-      const legacyCode = getLegacyCodeForPlace(place, cleanedLabel);
-      const turnitCityName = getTurnitCityName(place, cleanedLabel, legacyCode);
-
-      return {
-        value: legacyCode || place.id,
-        apiId: place.id,
-        label: cleanedLabel || place.label || place.name || "",
-        cityName: place.name || cleanedLabel || place.label || "",
-        turnitLabel: turnitCityName,
-        turnitCityName: turnitCityName,
-        raw: place
-      };
-    }
-
-    function sortPlacesAlphabetically(places) {
-      return places.slice().sort(function (a, b) {
-        return String(a.label || "").localeCompare(String(b.label || ""), heroState.language, {
-          sensitivity: "base"
-        });
-      });
-    }
-
-    function makeApiError(stage, message, url, status, originalError) {
-      return {
-        stage: stage || "unknown",
-        message: message || "Unknown API error",
-        url: url || null,
-        status: status || null,
-        timestamp: new Date().toISOString(),
-        originalErrorName: originalError && originalError.name ? originalError.name : null
-      };
-    }
-
-    async function apiGet(path, query, stage) {
-      const url = new URL(
-        CONFIG.apiBaseUrl.replace(/\/$/, "") + "/" + path.replace(/^\//, "")
-      );
-
-      Object.keys(query || {}).forEach(function (key) {
-        const value = query[key];
-
-        if (value !== null && value !== undefined && value !== "") {
-          url.searchParams.set(key, value);
-        }
-      });
-
-      const urlString = url.toString();
-
-      if (
-        heroState.simulateApiFailureStage === "any" ||
-        heroState.simulateApiFailureStage === stage
-      ) {
-        heroState.simulateApiFailureStage = null;
-        throw makeApiError(
-          stage,
-          "Simulated hero API failure",
-          urlString,
-          null,
-          { name: "SimulatedFailure" }
-        );
-      }
-
-      const controller = new AbortController();
-      const timeout = window.setTimeout(function () {
-        controller.abort();
-      }, CONFIG.apiTimeoutMs);
-
-      try {
-        const response = await fetch(urlString, {
-          method: "GET",
-          headers: {
-            Accept: "application/json"
-          },
-          signal: controller.signal
-        });
-
-        if (!response.ok) {
-          let message = "HTTP " + response.status;
-
-          try {
-            const payload = await response.json();
-            if (payload && payload.message) {
-              message = payload.message + " (HTTP " + response.status + ")";
-            }
-          } catch (_) {
-            // Keep default HTTP message.
-          }
-
-          throw makeApiError(stage, message, urlString, response.status, null);
-        }
-
-        return await response.json();
-      } catch (error) {
-        if (error && error.stage && error.message && error.url) {
-          throw error;
-        }
-
-        if (error && error.name === "AbortError") {
-          throw makeApiError(
-            stage,
-            "API timeout after " + (CONFIG.apiTimeoutMs / 1000) + "s",
-            urlString,
-            null,
-            error
-          );
-        }
-
-        throw makeApiError(
-          stage,
-          error && error.message ? error.message : "Network/API error",
-          urlString,
-          null,
-          error
-        );
-      } finally {
-        window.clearTimeout(timeout);
-      }
-    }
-
-    function getPanelContent(panel) {
-      if (!panel) return null;
-
-      return (
-        panel.querySelector(".dropup-list-content") ||
-        panel.querySelector(".dropdown-list-content") ||
-        panel.querySelector(".dropdown-list-item") ||
-        panel
-      );
-    }
-
-    function getTemplateItemClass(panel) {
-      const templateItem = panel?.querySelector(".dropdown-item");
-
-      return templateItem?.className || "dropdown-item";
-    }
-
-    function captureTemplateClasses() {
-      heroState.itemClasses.origin = getTemplateItemClass(els.originDropdown);
-      heroState.itemClasses.destination = getTemplateItemClass(els.destinationDropdown);
-    }
-
-    function preparePanel(panel) {
-      if (!panel) return;
-
-      panel.style.display = "none";
-      panel.style.opacity = "0";
-      panel.style.transform = "translateY(0.5rem)";
-      panel.style.transition =
-        "opacity " + CONFIG.panelTransitionMs + "ms ease-in-out, transform " + CONFIG.panelTransitionMs + "ms ease-in-out";
-      panel.style.pointerEvents = "none";
-    }
-
-    function openPanel(panel) {
-      if (!panel || heroState.apiUnavailable) return;
-
-      if (heroState.openPanel && heroState.openPanel !== panel) {
-        closePanel(heroState.openPanel, true);
-      }
-
-      heroState.openPanel = panel;
-
-      panel.style.display = "block";
-      panel.style.pointerEvents = "auto";
-
-      window.requestAnimationFrame(function () {
-        panel.style.opacity = "1";
-        panel.style.transform = "translateY(0)";
-      });
-    }
-
-    function closePanel(panel, instant) {
-      if (!panel) return;
-
-      if (heroState.openPanel === panel) {
-        heroState.openPanel = null;
-      }
-
-      if (instant) {
-        panel.style.opacity = "0";
-        panel.style.transform = "translateY(0.5rem)";
-        panel.style.pointerEvents = "none";
-        panel.style.display = "none";
-        return;
-      }
-
-      panel.style.opacity = "0";
-      panel.style.transform = "translateY(0.5rem)";
-      panel.style.pointerEvents = "none";
-
-      window.setTimeout(function () {
-        if (heroState.openPanel !== panel) {
-          panel.style.display = "none";
-        }
-      }, CONFIG.panelTransitionMs);
-    }
-
-    function togglePanel(panel) {
-      if (!panel || heroState.apiUnavailable) return;
-
-      const isOpen = heroState.openPanel === panel && panel.style.display !== "none";
-
-      if (isOpen) {
-        closePanel(panel);
-      } else {
-        openPanel(panel);
-      }
-    }
-
-    function closeAllPanels() {
-      closePanel(els.originDropdown);
-      closePanel(els.destinationDropdown);
-    }
-
-    function setLabelPlaceholder(labelEl, text) {
-      if (!labelEl) return;
-
-      labelEl.textContent = text;
-      labelEl.style.color = "";
-    }
-
-    function setLabelSelected(labelEl, text) {
-      if (!labelEl) return;
-
-      labelEl.textContent = text;
-      labelEl.style.color = CONFIG.selectedTextColor;
-    }
-
-    function setFieldActiveStyle(field, isActive) {
-      if (!field) return;
-
-      field.style.opacity = isActive ? "" : "0.4";
-      field.style.pointerEvents = isActive ? "" : "none";
-      field.setAttribute("aria-disabled", isActive ? "false" : "true");
-    }
-
-    function setFieldLoading(field, isLoading) {
-      if (!field) return;
-
-      if (heroState.apiUnavailable) {
-        return;
-      }
-
-      field.style.opacity = isLoading ? "0.6" : "";
-      field.style.pointerEvents = isLoading ? "none" : "";
-      field.setAttribute("aria-busy", isLoading ? "true" : "false");
-    }
-
-    function hardDisableField(field) {
-      if (!field) return;
-
-      field.style.opacity = "0.4";
-      field.style.pointerEvents = "none";
-      field.setAttribute("aria-disabled", "true");
-    }
-
-    function showHeroError(message) {
-      if (!els.error) return;
-
-      els.error.textContent = message;
-      els.error.style.display = "block";
-    }
-
-    function hideHeroError() {
-      if (!els.error) return;
-
-      els.error.style.display = "none";
-    }
-
-    function renderHeroOptions(panel, options, onSelect, emptyText, type) {
-      const content = getPanelContent(panel);
-      if (!content) return;
-
-      const itemClass =
-        type === "origin"
-          ? heroState.itemClasses.origin || "dropdown-item"
-          : heroState.itemClasses.destination || "dropdown-item";
-
-      content.innerHTML = "";
-
-      if (!options.length) {
-        const emptyItem = document.createElement("div");
-        emptyItem.className = itemClass;
-        emptyItem.textContent = emptyText;
-        emptyItem.style.cursor = "default";
-        content.appendChild(emptyItem);
-        return;
-      }
-
-      options.forEach(function (option) {
-        const item = document.createElement("div");
-        item.className = itemClass;
-        item.textContent = option.label;
-        item.setAttribute("role", "option");
-        item.setAttribute("tabindex", "0");
-
-        item.addEventListener("click", function (event) {
-          event.preventDefault();
-          event.stopPropagation();
-          if (heroState.apiUnavailable) return;
-          onSelect(option);
-        });
-
-        item.addEventListener("keydown", function (event) {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            if (heroState.apiUnavailable) return;
-            onSelect(option);
-          }
-        });
-
-        content.appendChild(item);
-      });
-    }
-
-    function resetDestinationForHero() {
-      heroState.selectedDestination = null;
-      heroState.destinationPlaces = [];
-      heroState.destinationLoaded = false;
-
-      setLabelPlaceholder(els.destinationLabel, labels.choose);
-      setFieldActiveStyle(els.destinationField, Boolean(heroState.selectedOrigin));
-      closePanel(els.destinationDropdown, true);
-    }
-
-    function setOrigin(origin) {
-      heroState.selectedOrigin = origin;
-
-      setLabelSelected(els.originLabel, origin.label);
-      closePanel(els.originDropdown);
-
-      resetDestinationForHero();
-      hideHeroError();
-    }
-
-    function setDestination(destination) {
-      heroState.selectedDestination = destination;
-
-      setLabelSelected(els.destinationLabel, destination.label);
-      closePanel(els.destinationDropdown);
-
-      hideHeroError();
-    }
-
-    function activateHeroFallbackMode(reason) {
-      const fallbackReason = reason && typeof reason === "object"
-        ? reason
-        : makeApiError("hero-fallback", String(reason || labels.fallbackMessage), null, null, null);
-
-      heroState.apiUnavailable = true;
-      heroState.fallbackReason = fallbackReason;
-
-      hero.setAttribute("data-booking-hero-api-unavailable", "true");
-
-      closeAllPanels();
-
-      hardDisableField(els.originField);
-      hardDisableField(els.destinationField);
-
-      if (els.submit) {
-        els.submit.style.opacity = "";
-        els.submit.style.pointerEvents = "";
-        els.submit.setAttribute("aria-disabled", "false");
-      }
-
-      showHeroError(labels.fallbackMessage);
-
-      console.warn("Twiliner hero fallback mode activated:", fallbackReason);
-    }
-
-    async function loadOriginPlaces() {
-      if (heroState.apiUnavailable) return;
-      if (heroState.isLoadingOrigins || heroState.originLoaded) return;
-
-      heroState.isLoadingOrigins = true;
-
-      setFieldLoading(els.originField, true);
-
-      if (!heroState.selectedOrigin) {
-        setLabelPlaceholder(els.originLabel, labels.loading);
-      }
-
-      try {
-        const apiLanguage = API_LANGUAGE_MAP[heroState.language] || "de";
-
-        const payload = await apiGet("get-places", {
-          type: "departure",
-          language: apiLanguage,
-          operator_id: CONFIG.operatorId
-        }, "hero-origin-places");
-
-        const places = Array.isArray(payload)
-          ? payload.map(mapPlace).filter(function (place) {
-              return Boolean(place.label && place.apiId);
-            })
-          : [];
-
-        heroState.originPlaces = sortPlacesAlphabetically(places);
-        heroState.originLoaded = true;
-
-        renderHeroOptions(
-          els.originDropdown,
-          heroState.originPlaces,
-          setOrigin,
-          labels.noDepartures,
-          "origin"
-        );
-
-        if (!heroState.selectedOrigin) {
-          setLabelPlaceholder(els.originLabel, labels.choose);
-        }
-      } catch (error) {
-        console.error("Twiliner hero origin API error:", error);
-
-        setLabelPlaceholder(els.originLabel, labels.choose);
-        activateHeroFallbackMode(error);
-      } finally {
-        heroState.isLoadingOrigins = false;
-        setFieldLoading(els.originField, false);
-      }
-    }
-
-    async function loadDestinationPlaces() {
-      if (heroState.apiUnavailable) return;
-
-      if (!heroState.selectedOrigin) {
-        setFieldActiveStyle(els.destinationField, false);
-        showHeroError(labels.selectOriginFirst);
-        return;
-      }
-
-      if (heroState.isLoadingDestinations || heroState.destinationLoaded) return;
-
-      heroState.isLoadingDestinations = true;
-
-      setFieldLoading(els.destinationField, true);
-
-      if (!heroState.selectedDestination) {
-        setLabelPlaceholder(els.destinationLabel, labels.loading);
-      }
-
-      try {
-        const apiLanguage = API_LANGUAGE_MAP[heroState.language] || "de";
-
-        const payload = await apiGet("get-places", {
-          type: "arrival",
-          language: apiLanguage,
-          operator_id: CONFIG.operatorId,
-          place_departure_id: heroState.selectedOrigin.apiId
-        }, "hero-destination-places");
-
-        const places = Array.isArray(payload)
-          ? payload.map(mapPlace).filter(function (place) {
-              return Boolean(place.label && place.apiId);
-            })
-          : [];
-
-        heroState.destinationPlaces = sortPlacesAlphabetically(places);
-        heroState.destinationLoaded = true;
-
-        renderHeroOptions(
-          els.destinationDropdown,
-          heroState.destinationPlaces,
-          setDestination,
-          labels.noDestinations,
-          "destination"
-        );
-
-        if (!heroState.selectedDestination) {
-          setLabelPlaceholder(els.destinationLabel, labels.choose);
-        }
-
-        setFieldActiveStyle(els.destinationField, heroState.destinationPlaces.length > 0);
-      } catch (error) {
-        console.error("Twiliner hero destination API error:", error);
-
-        setLabelPlaceholder(els.destinationLabel, labels.choose);
-        activateHeroFallbackMode(error);
-      } finally {
-        heroState.isLoadingDestinations = false;
-        setFieldLoading(els.destinationField, false);
-      }
-    }
-
-    async function handleOriginClick(event) {
-      if (event) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-
-      if (heroState.apiUnavailable) return;
-
-      hideHeroError();
-
-      await loadOriginPlaces();
-
-      if (heroState.originLoaded) {
-        togglePanel(els.originDropdown);
-      }
-    }
-
-    async function handleDestinationClick(event) {
-      if (event) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-
-      if (heroState.apiUnavailable) return;
-
-      hideHeroError();
-
-      if (!heroState.selectedOrigin) {
-        setFieldActiveStyle(els.destinationField, false);
-        showHeroError(labels.selectOriginFirst);
-        return;
-      }
-
-      await loadDestinationPlaces();
-
-      if (heroState.destinationLoaded) {
-        togglePanel(els.destinationDropdown);
-      }
-    }
-
-    function readStoredUrlParams() {
-      try {
-        const raw = sessionStorage.getItem(CONFIG.trackingStorageKey);
-        if (!raw) return [];
-
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed : [];
-      } catch (_) {
-        return [];
-      }
-    }
-
-    function appendTrackingParams(targetParams) {
-      const merged = new Map();
-
-      readStoredUrlParams().forEach(function (item) {
-        if (!item || !item.key) return;
-        if (TURNIT_PROTECTED_PARAMS.has(item.key)) return;
-        merged.set(item.key, item.value || "");
-      });
-
-      try {
-        const current = new URLSearchParams(window.location.search || "");
-        current.forEach(function (value, key) {
-          if (!key || value === "") return;
-          if (TURNIT_PROTECTED_PARAMS.has(key)) return;
-          merged.set(key, value);
-        });
-      } catch (_) {
-        // Ignore URL parsing issues.
-      }
-
-      merged.forEach(function (value, key) {
-        if (!targetParams.has(key)) {
-          targetParams.append(key, value);
-        }
-      });
-    }
-
-    function buildHeroFallbackUrl() {
-      try {
-        const url = new URL(CONFIG.bookingBaseUrl);
-        const params = new URLSearchParams();
-
-        params.set("language", heroState.language);
-        appendTrackingParams(params);
-
-        const query = params.toString();
-
-        return query
-          ? url.toString().replace(/\?$/, "") + "?" + query
-          : url.toString();
-      } catch (_) {
-        return CONFIG.bookingBaseUrl;
-      }
-    }
-
-    function getModalDebug() {
-      return window.TwilinerBookingWidgetDebug || null;
-    }
-
-    function getModalLabels(language) {
-      return language === "en"
-        ? {
-            choose: "Please select",
-            chooseDate: "Date",
-            noBookableDates: TEXT.en.noBookableDates
-          }
-        : {
-            choose: "Bitte wählen",
-            chooseDate: "Datum",
-            noBookableDates: TEXT.de.noBookableDates
-          };
-    }
-
-    function setModalLabelPlaceholder(labelEl, text) {
-      if (!labelEl) return;
-
-      labelEl.textContent = text;
-      labelEl.style.color = "";
-    }
-
-    function setModalLabelSelected(labelEl, text) {
-      if (!labelEl) return;
-
-      labelEl.textContent = text;
-      labelEl.style.color = CONFIG.selectedTextColor;
-    }
-
-    function setModalFieldActive(field, isActive) {
-      if (!field) return;
-
-      field.style.opacity = isActive ? "" : "0.4";
-      field.style.pointerEvents = isActive ? "" : "none";
-      field.setAttribute("aria-disabled", isActive ? "false" : "true");
-    }
-
-    function showModalError(message) {
-      const modal = getModalDebug();
-      if (!modal || !modal.elements || !modal.elements.error) return;
-
-      modal.elements.error.textContent = message;
-      modal.elements.error.style.display = "block";
-    }
-
-    function hideModalError() {
-      const modal = getModalDebug();
-      if (!modal || !modal.elements || !modal.elements.error) return;
-
-      modal.elements.error.style.display = "none";
-    }
-
-    function closeModalPanel(panel) {
-      if (!panel) return;
-
-      panel.style.opacity = "0";
-      panel.style.transform = "translateY(0.5rem)";
-      panel.style.pointerEvents = "none";
-      panel.style.display = "none";
-    }
-
-    function closeModalPanels(modalEls) {
-      closeModalPanel(modalEls.originDropdown);
-      closeModalPanel(modalEls.destinationDropdown);
-      closeModalPanel(modalEls.departureOverlay);
-      closeModalPanel(modalEls.returnOverlay);
-    }
-
-    function clearModalRouteState() {
-      const modal = getModalDebug();
-      if (!modal || !modal.state || !modal.elements) return false;
-
-      const modalState = modal.state;
-      const modalEls = modal.elements;
-      const modalLabels = getModalLabels(modalState.language);
-
-      modalState.selectedOrigin = null;
-      modalState.selectedDestination = null;
-      modalState.selectedDepartureDate = null;
-      modalState.selectedReturnDate = null;
-
-      modalState.destinationPlaces = [];
-      modalState.destinationLoaded = false;
-
-      modalState.departureDates = new Set();
-      modalState.departurePrices = new Map();
-      modalState.departureCheapDates = new Set();
-
-      modalState.returnDates = new Set();
-      modalState.returnPrices = new Map();
-      modalState.returnCheapDates = new Set();
-
-      modalState.departureDatesLoaded = false;
-      modalState.returnDatesLoaded = false;
-
-      setModalLabelPlaceholder(modalEls.originLabel, modalLabels.choose);
-      setModalLabelPlaceholder(modalEls.destinationLabel, modalLabels.choose);
-      setModalLabelPlaceholder(modalEls.departureLabel, modalLabels.chooseDate);
-      setModalLabelPlaceholder(modalEls.returnLabel, modalLabels.chooseDate);
-
-      setModalFieldActive(modalEls.originField, true);
-      setModalFieldActive(modalEls.destinationField, false);
-      setModalFieldActive(modalEls.departureField, false);
-      setModalFieldActive(modalEls.returnField, false);
-
-      hideModalError();
-
-      closeModalPanels(modalEls);
-
-      if (modal.state) {
-        modal.state.openPanel = null;
-      }
-
-      return true;
-    }
-
-    function findPlaceByHeroSelection(places, heroPlace) {
-      if (!Array.isArray(places) || !heroPlace) return null;
-
-      return places.find(function (place) {
-        return place.apiId === heroPlace.apiId;
-      }) || places.find(function (place) {
-        return place.value === heroPlace.value;
-      }) || places.find(function (place) {
-        return normalizeLookupKey(place.label) === normalizeLookupKey(heroPlace.label);
-      }) || null;
-    }
-
-    async function prefillModalFromHero(options) {
-      const modal = getModalDebug();
-      if (!modal || !modal.state || !modal.elements) return false;
-
-      const modalState = modal.state;
-      const modalEls = modal.elements;
-      const modalLabels = getModalLabels(modalState.language);
-
-      const origin = options && options.origin ? options.origin : null;
-      const destination = options && options.destination ? options.destination : null;
-
-      clearModalRouteState();
-
-      if (!origin) {
-        return true;
-      }
-
-      modalState.selectedOrigin = origin;
-      setModalLabelSelected(modalEls.originLabel, origin.label);
-
-      if (typeof modal.loadDestinationPlaces === "function") {
-        await modal.loadDestinationPlaces();
-      }
-
-      setModalFieldActive(modalEls.destinationField, true);
-
-      if (!destination) {
-        return true;
-      }
-
-      const matchedDestination = findPlaceByHeroSelection(modalState.destinationPlaces, destination);
-
-      if (!matchedDestination) {
-        return true;
-      }
-
-      modalState.selectedDestination = matchedDestination;
-      setModalLabelSelected(modalEls.destinationLabel, matchedDestination.label);
-
-      modalState.selectedDepartureDate = null;
-      modalState.selectedReturnDate = null;
-
-      setModalLabelPlaceholder(modalEls.departureLabel, modalLabels.chooseDate);
-      setModalLabelPlaceholder(modalEls.returnLabel, modalLabels.chooseDate);
-
-      modalState.departureDates = new Set();
-      modalState.departurePrices = new Map();
-      modalState.departureCheapDates = new Set();
-      modalState.departureDatesLoaded = false;
-
-      modalState.returnDates = new Set();
-      modalState.returnPrices = new Map();
-      modalState.returnCheapDates = new Set();
-      modalState.returnDatesLoaded = false;
-
-      if (typeof modal.loadDepartureDates === "function") {
-        await modal.loadDepartureDates();
-      }
-
-      if (modalState.departureDatesLoaded && modalState.departureDates.size === 0) {
-        setModalFieldActive(modalEls.departureField, false);
-        showModalError(modalLabels.noBookableDates);
-        return true;
-      }
-
-      setModalFieldActive(modalEls.departureField, modalState.departureDates.size > 0);
-      hideModalError();
-
-      return true;
-    }
-
-    function handleSubmitClick(event) {
-      if (heroState.apiUnavailable) {
-        if (event) {
-          event.preventDefault();
-          event.stopPropagation();
-          event.stopImmediatePropagation();
-        }
-
-        window.location.href = buildHeroFallbackUrl();
-        return;
-      }
-
-      window.setTimeout(function () {
-        prefillModalFromHero({
-          origin: heroState.selectedOrigin,
-          destination: heroState.selectedDestination
-        });
-      }, CONFIG.modalPrefillDelayMs);
-    }
-
-    function simulateHeroFallback() {
-      activateHeroFallbackMode(makeApiError(
-        "hero-manual-test",
-        "Manually triggered hero fallback test",
-        null,
-        null,
-        { name: "ManualTest" }
-      ));
-
-      return getHeroStatus();
-    }
-
-    function simulateHeroApiFailureOnce(stage) {
-      heroState.simulateApiFailureStage = stage || "any";
-
-      return {
-        message: "The next matching hero API call will fail once.",
-        stage: heroState.simulateApiFailureStage
-      };
-    }
-
-    function getHeroStatus() {
-      return {
-        apiUnavailable: heroState.apiUnavailable,
-        fallbackReason: heroState.fallbackReason,
-        language: heroState.language,
-
-        selectedOrigin: heroState.selectedOrigin,
-        selectedDestination: heroState.selectedDestination,
-
-        originLoaded: heroState.originLoaded,
-        destinationLoaded: heroState.destinationLoaded,
-
-        originPlacesCount: heroState.originPlaces.length,
-        destinationPlacesCount: heroState.destinationPlaces.length,
-
-        isLoadingOrigins: heroState.isLoadingOrigins,
-        isLoadingDestinations: heroState.isLoadingDestinations,
-
-        originItemClass: heroState.itemClasses.origin,
-        destinationItemClass: heroState.itemClasses.destination,
-
-        fallbackUrl: buildHeroFallbackUrl(),
-
-        openPanel: heroState.openPanel
-          ? heroState.openPanel.getAttribute("data-booking-hero-dropdown")
-          : null
-      };
-    }
-
-    function bindEvents() {
-      if (els.originField) {
-        els.originField.addEventListener("click", handleOriginClick);
-      }
-
-      if (els.destinationField) {
-        els.destinationField.addEventListener("click", handleDestinationClick);
-      }
-
-      if (els.submit) {
-        els.submit.addEventListener("click", handleSubmitClick, true);
-      }
-
-      document.addEventListener("click", function (event) {
-        if (!heroState.openPanel) return;
-
-        const clickedInsideOpenPanel = heroState.openPanel.contains(event.target);
-        const clickedHeroField = event.target.closest('[data-booking-hero-field]');
-
-        if (clickedInsideOpenPanel || clickedHeroField) return;
-
-        closeAllPanels();
-      });
-
-      document.addEventListener("keydown", function (event) {
-        if (event.key === "Escape") {
-          closeAllPanels();
-        }
-      });
-    }
-
-    function init() {
-      captureTemplateClasses();
-
-      preparePanel(els.originDropdown);
-      preparePanel(els.destinationDropdown);
-
-      setFieldActiveStyle(els.destinationField, false);
-      hideHeroError();
-
-      bindEvents();
-
-      window.TwilinerBookingWidgetDebug = Object.assign(
-        window.TwilinerBookingWidgetDebug || {},
-        {
-          heroState,
-          heroElements: els,
-          getHeroStatus,
-          prefillModalFromHero,
-          buildHeroFallbackUrl,
-          simulateHeroFallback,
-          simulateHeroApiFailureOnce
-        }
-      );
-    }
-
-    init();
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initTwilinerHeroRouteSelector);
-  } else {
-    initTwilinerHeroRouteSelector();
-  }
-})();
-
-
-
-/* ==========================================================================
-   Twiliner No Bookable Dates Guard
-   v22: Persistent No Bookable Dates Message
-   - Hält die No-Dates-Meldung stabil, wenn eine Route keine buchbaren Daten hat
-   - Gilt für normales Modal und Hero → Modal
-   - Verhindert falsche Meldungen bei Klick auf von / Datum, bis / Datum, Jetzt buchen
-   ========================================================================== */
-
-(function () {
-  function initTwilinerNoBookableDatesGuard() {
-    const MODAL_ERROR_TEXT = {
-      de: "Für diese Verbindung sind aktuell keine Reisedaten verfügbar.",
-      en: "There are currently no travel dates available for this connection."
-    };
-
-    function getDebug() {
-      return window.TwilinerBookingWidgetDebug || null;
-    }
-
-    function getLanguage(debug) {
-      return debug && debug.state && debug.state.language === "en" ? "en" : "de";
-    }
-
-    function getNoBookableMessage(debug) {
-      return MODAL_ERROR_TEXT[getLanguage(debug)] || MODAL_ERROR_TEXT.de;
-    }
-
-    function isNoBookableRoute(debug) {
-      if (!debug || !debug.state) return false;
-
-      const state = debug.state;
-
-      return Boolean(
-        state.selectedOrigin &&
-        state.selectedDestination &&
-        state.departureDatesLoaded &&
-        state.departureDates &&
-        state.departureDates.size === 0
-      );
-    }
-
-    function showNoBookableMessage(debug) {
-      if (!debug || !debug.elements || !debug.elements.error) return;
-
-      debug.elements.error.textContent = getNoBookableMessage(debug);
-      debug.elements.error.style.display = "block";
-    }
-
-    function guardClick(event) {
-      const debug = getDebug();
-
-      if (!isNoBookableRoute(debug)) return;
-
-      const target = event.target;
-
-      const clickedDeparture =
-        debug.elements.departureField &&
-        debug.elements.departureField.contains(target);
-
-      const clickedReturn =
-        debug.elements.returnField &&
-        debug.elements.returnField.contains(target);
-
-      const clickedSubmit =
-        debug.elements.submit &&
-        debug.elements.submit.contains(target);
-
-      if (!clickedDeparture && !clickedReturn && !clickedSubmit) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-
-      showNoBookableMessage(debug);
-    }
-
-    function syncNoBookableMessage() {
-      const debug = getDebug();
-
-      if (!isNoBookableRoute(debug)) return;
-
-      showNoBookableMessage(debug);
-    }
-
-    document.addEventListener("click", guardClick, true);
-
-    window.setInterval(syncNoBookableMessage, 500);
-
-    window.TwilinerBookingWidgetDebug = Object.assign(
-      window.TwilinerBookingWidgetDebug || {},
-      {
-        isNoBookableRoute: function () {
-          return isNoBookableRoute(getDebug());
-        },
-        showNoBookableMessage: function () {
-          return showNoBookableMessage(getDebug());
-        }
-      }
-    );
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initTwilinerNoBookableDatesGuard);
-  } else {
-    initTwilinerNoBookableDatesGuard();
-  }
-})();
-
-
-
 
 
 /* ==========================================================================
    Twiliner Destination Route Selector
-   v23 / D2: Destination Page Route Data + Origin List Render
+   v24 / D3: Destination Page Route Data + Smooth Expand/Collapse
    - Liest aktuelle Destination API ID aus dem CMS-Attribut
    - Lädt alle möglichen Abfahrtsorte via API
    - Prüft pro Abfahrtsort, ob die aktuelle Destination angefahren wird
    - Rendert die möglichen Abfahrtsorte in die Origin-Liste
    - Setzt den ersten verfügbaren Abfahrtsort als Default
    - Setzt das Destination-Label aus API-Daten
-   - Stellt Debug-Funktion getDestinationRouteStatus() bereit
+   - Initial nur ein Abfahrtsort sichtbar
+   - Expanded per IntersectionObserver
+   - Click auf Origin collapsed die Liste wieder smooth
+   - Icon wird nie überschrieben, nur der Wrapper bewegt
    ========================================================================== */
 
 (function () {
@@ -3386,7 +2151,13 @@
       apiBaseUrl: "https://data.nightride.com/api",
       operatorId: "a0cf1341-a01b-449d-b91f-17a1b4f84c44",
       apiTimeoutMs: 10000,
-      selectedTextColor: "#46288c"
+      selectedTextColor: "#46288c",
+      breakpointMobile: 767,
+      listTransitionMs: 650,
+      itemTransitionMs: 520,
+      itemStaggerMs: 70,
+      targetTransitionMs: 650,
+      observerThreshold: 0.45
     };
 
     const API_LANGUAGE_MAP = {
@@ -3441,6 +2212,8 @@
 
       isLoading: false,
       isLoaded: false,
+      isExpanded: false,
+      hasUserSelectedOrigin: false,
 
       error: null,
 
@@ -3449,7 +2222,9 @@
         name: null,
         address: null,
         map: null
-      }
+      },
+
+      observer: null
     };
 
     const els = {
@@ -3650,11 +2425,58 @@
       routeState.templateClasses.map = mapEl?.className || "cascading-address";
     }
 
+    function isMobile() {
+      return window.matchMedia("(max-width: " + CONFIG.breakpointMobile + "px)").matches;
+    }
+
     function setDestinationLabel() {
       if (!els.destinationLabel || !routeState.currentDestination) return;
 
       els.destinationLabel.textContent = routeState.currentDestination.label;
       els.destinationLabel.style.color = CONFIG.selectedTextColor;
+    }
+
+    function setDestinationPointerEvents() {
+      if (els.destinationWrapper) {
+        els.destinationWrapper.style.pointerEvents = "none";
+      }
+
+      if (els.destinationMap) {
+        els.destinationMap.style.pointerEvents = "auto";
+      }
+    }
+
+    function hideDestinationDetails(instant) {
+      [els.destinationAddress, els.destinationMap].forEach(function (el) {
+        if (!el) return;
+
+        el.style.overflow = "hidden";
+        el.style.transition = instant
+          ? "none"
+          : "opacity 320ms ease-in-out, transform 320ms ease-in-out, max-height 320ms ease-in-out";
+
+        el.style.opacity = "0";
+        el.style.transform = "translateY(-0.35rem)";
+        el.style.maxHeight = "0px";
+        el.style.pointerEvents = "none";
+      });
+    }
+
+    function showDestinationDetails() {
+      [els.destinationAddress, els.destinationMap].forEach(function (el) {
+        if (!el) return;
+
+        el.style.display = "";
+        el.style.overflow = "hidden";
+        el.style.transition = "opacity 360ms ease-in-out, transform 360ms ease-in-out, max-height 360ms ease-in-out";
+        el.style.maxHeight = el.scrollHeight + "px";
+        el.style.opacity = "1";
+        el.style.transform = "translateY(0)";
+      });
+
+      if (els.destinationMap) {
+        els.destinationMap.style.pointerEvents = "auto";
+      }
     }
 
     function clearGeneratedOriginList() {
@@ -3684,6 +2506,13 @@
       item.setAttribute("role", "button");
       item.setAttribute("tabindex", "0");
 
+      item.style.overflow = "hidden";
+      item.style.willChange = "opacity, transform, max-height";
+      item.style.transition =
+        "opacity " + CONFIG.itemTransitionMs + "ms ease-in-out, " +
+        "transform " + CONFIG.itemTransitionMs + "ms ease-in-out, " +
+        "max-height " + CONFIG.listTransitionMs + "ms ease-in-out";
+
       const nameEl = item.querySelector('[data-booking-destination-origin-name="true"]');
       const addressEl = item.querySelector('[data-booking-destination-origin-address="true"]');
       const mapEl = item.querySelector('[data-booking-destination-origin-map="true"]');
@@ -3694,24 +2523,33 @@
       }
 
       if (addressEl) {
-        addressEl.textContent = "";
-        addressEl.style.display = "none";
+        addressEl.style.overflow = "hidden";
+        addressEl.style.opacity = "0";
+        addressEl.style.transform = "translateY(-0.35rem)";
+        addressEl.style.maxHeight = "0px";
+        addressEl.style.pointerEvents = "none";
+        addressEl.style.transition = "opacity 320ms ease-in-out, transform 320ms ease-in-out, max-height 320ms ease-in-out";
       }
 
       if (mapEl) {
         mapEl.setAttribute("href", "#");
-        mapEl.style.display = "none";
+        mapEl.style.overflow = "hidden";
+        mapEl.style.opacity = "0";
+        mapEl.style.transform = "translateY(-0.35rem)";
+        mapEl.style.maxHeight = "0px";
+        mapEl.style.pointerEvents = "none";
+        mapEl.style.transition = "opacity 320ms ease-in-out, transform 320ms ease-in-out, max-height 320ms ease-in-out";
       }
 
       item.addEventListener("click", function (event) {
         event.preventDefault();
-        selectOrigin(place);
+        selectOrigin(place, true);
       });
 
       item.addEventListener("keydown", function (event) {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          selectOrigin(place);
+          selectOrigin(place, true);
         }
       });
 
@@ -3728,13 +2566,39 @@
         els.originList.appendChild(item);
       });
 
+      prepareOriginList();
       updateSelectedOriginVisual();
+      applyCollapsedState(true);
+    }
+
+    function getRenderedOriginItems() {
+      if (!els.originList) return [];
+
+      return Array.from(
+        els.originList.querySelectorAll('[data-booking-destination-origin-rendered="true"]')
+      );
+    }
+
+    function getSelectedOriginItem() {
+      if (!routeState.selectedOrigin) return null;
+
+      return getRenderedOriginItems().find(function (item) {
+        return item.getAttribute("data-booking-destination-origin-api-id") === routeState.selectedOrigin.apiId;
+      }) || null;
+    }
+
+    function prepareOriginList() {
+      if (!els.originList) return;
+
+      els.originList.style.overflow = "hidden";
+      els.originList.style.transition = "max-height " + CONFIG.listTransitionMs + "ms ease-in-out";
+      els.originList.style.willChange = "max-height";
     }
 
     function updateSelectedOriginVisual() {
       if (!els.originList || !routeState.selectedOrigin) return;
 
-      Array.from(els.originList.querySelectorAll('[data-booking-destination-origin-rendered="true"]')).forEach(function (item) {
+      getRenderedOriginItems().forEach(function (item) {
         const isSelected = item.getAttribute("data-booking-destination-origin-api-id") === routeState.selectedOrigin.apiId;
 
         item.classList.toggle("is-selected", isSelected);
@@ -3742,9 +2606,171 @@
       });
     }
 
-    function selectOrigin(place) {
+    function getExpandedListHeight() {
+      if (!els.originList) return 0;
+
+      const items = getRenderedOriginItems();
+
+      return items.reduce(function (sum, item) {
+        return sum + item.scrollHeight;
+      }, 0);
+    }
+
+    function getCollapsedListHeight() {
+      const selectedItem = getSelectedOriginItem();
+      return selectedItem ? selectedItem.scrollHeight : 0;
+    }
+
+    function setTargetTransformForExpanded() {
+      if (isMobile()) {
+        resetTargetTransform();
+        return;
+      }
+
+      const expandedHeight = getExpandedListHeight();
+      const collapsedHeight = getCollapsedListHeight();
+
+      const delta = Math.max(0, (expandedHeight - collapsedHeight) / 2);
+
+      [els.iconWrapper, els.destinationWrapper].forEach(function (el) {
+        if (!el) return;
+
+        el.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
+        el.style.transform = "translateY(" + delta + "px)";
+        el.style.willChange = "transform";
+      });
+    }
+
+    function resetTargetTransform() {
+      [els.iconWrapper, els.destinationWrapper].forEach(function (el) {
+        if (!el) return;
+
+        el.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
+        el.style.transform = "translateY(0px)";
+      });
+    }
+
+    function hideOriginDetails(item, instant) {
+      if (!item) return;
+
+      const addressEl = item.querySelector('[data-booking-destination-origin-address="true"]');
+      const mapEl = item.querySelector('[data-booking-destination-origin-map="true"]');
+
+      [addressEl, mapEl].forEach(function (el) {
+        if (!el) return;
+
+        el.style.transition = instant
+          ? "none"
+          : "opacity 320ms ease-in-out, transform 320ms ease-in-out, max-height 320ms ease-in-out";
+
+        el.style.opacity = "0";
+        el.style.transform = "translateY(-0.35rem)";
+        el.style.maxHeight = "0px";
+        el.style.pointerEvents = "none";
+      });
+    }
+
+    function showOriginDetails(item) {
+      if (!item) return;
+
+      const addressEl = item.querySelector('[data-booking-destination-origin-address="true"]');
+      const mapEl = item.querySelector('[data-booking-destination-origin-map="true"]');
+
+      [addressEl, mapEl].forEach(function (el) {
+        if (!el) return;
+
+        if (!el.textContent.trim()) return;
+
+        el.style.transition = "opacity 360ms ease-in-out, transform 360ms ease-in-out, max-height 360ms ease-in-out";
+        el.style.maxHeight = el.scrollHeight + "px";
+        el.style.opacity = "1";
+        el.style.transform = "translateY(0)";
+        el.style.pointerEvents = "auto";
+      });
+    }
+
+    function hideAllOriginDetails(instant) {
+      getRenderedOriginItems().forEach(function (item) {
+        hideOriginDetails(item, instant);
+      });
+    }
+
+    function applyCollapsedState(instant) {
+      routeState.isExpanded = false;
+
+      const items = getRenderedOriginItems();
+      const selectedItem = getSelectedOriginItem();
+
+      if (!els.originList || !selectedItem) return;
+
+      hideAllOriginDetails(instant);
+      hideDestinationDetails(instant);
+      resetTargetTransform();
+
+      items.forEach(function (item) {
+        const isSelected = item === selectedItem;
+
+        item.style.transition = instant
+          ? "none"
+          : "opacity " + CONFIG.itemTransitionMs + "ms ease-in-out, transform " + CONFIG.itemTransitionMs + "ms ease-in-out, max-height " + CONFIG.listTransitionMs + "ms ease-in-out";
+
+        item.style.transitionDelay = "0ms";
+        item.style.maxHeight = isSelected ? item.scrollHeight + "px" : "0px";
+        item.style.opacity = isSelected ? "1" : "0";
+        item.style.transform = isSelected ? "translateY(0)" : "translateY(-0.5rem)";
+        item.style.pointerEvents = isSelected ? "auto" : "none";
+      });
+
+      els.originList.style.maxHeight = selectedItem.scrollHeight + "px";
+
+      if (routeState.hasUserSelectedOrigin && !instant) {
+        window.setTimeout(function () {
+          const latestSelected = getSelectedOriginItem();
+          showOriginDetails(latestSelected);
+          showDestinationDetails();
+        }, CONFIG.listTransitionMs * 0.7);
+      }
+    }
+
+    function applyExpandedState() {
+      if (routeState.hasUserSelectedOrigin) return;
+
+      routeState.isExpanded = true;
+
+      const items = getRenderedOriginItems();
+      if (!els.originList || !items.length) return;
+
+      hideAllOriginDetails(false);
+      hideDestinationDetails(false);
+
+      const expandedHeight = getExpandedListHeight();
+      els.originList.style.maxHeight = expandedHeight + "px";
+
+      items.forEach(function (item, index) {
+        item.style.transition =
+          "opacity " + CONFIG.itemTransitionMs + "ms ease-in-out, " +
+          "transform " + CONFIG.itemTransitionMs + "ms ease-in-out, " +
+          "max-height " + CONFIG.listTransitionMs + "ms ease-in-out";
+
+        item.style.transitionDelay = (index * CONFIG.itemStaggerMs) + "ms";
+        item.style.maxHeight = item.scrollHeight + "px";
+        item.style.opacity = "1";
+        item.style.transform = "translateY(0)";
+        item.style.pointerEvents = "auto";
+      });
+
+      setTargetTransformForExpanded();
+    }
+
+    function selectOrigin(place, collapseAfterSelection) {
       routeState.selectedOrigin = place;
+      routeState.hasUserSelectedOrigin = Boolean(collapseAfterSelection);
+
       updateSelectedOriginVisual();
+
+      if (collapseAfterSelection) {
+        applyCollapsedState(false);
+      }
     }
 
     function isArrivalAvailableForDestination(arrivalPayload) {
@@ -3837,6 +2863,8 @@
 
         setDestinationLabel();
         renderOriginList();
+        initObserver();
+        setDestinationPointerEvents();
 
         routeState.isLoaded = true;
       } catch (error) {
@@ -3845,6 +2873,26 @@
       } finally {
         routeState.isLoading = false;
       }
+    }
+
+    function initObserver() {
+      if (!("IntersectionObserver" in window)) return;
+      if (routeState.observer) routeState.observer.disconnect();
+
+      routeState.observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          if (entry.intersectionRatio < CONFIG.observerThreshold) return;
+          if (routeState.hasUserSelectedOrigin) return;
+          if (routeState.isExpanded) return;
+
+          applyExpandedState();
+        });
+      }, {
+        threshold: [0, 0.25, CONFIG.observerThreshold, 0.75, 1]
+      });
+
+      routeState.observer.observe(root);
     }
 
     function getDestinationRouteStatus() {
@@ -3870,6 +2918,8 @@
 
         isLoading: routeState.isLoading,
         isLoaded: routeState.isLoaded,
+        isExpanded: routeState.isExpanded,
+        hasUserSelectedOrigin: routeState.hasUserSelectedOrigin,
 
         error: routeState.error,
 
@@ -3879,14 +2929,31 @@
           originTemplate: Boolean(els.originTemplate),
           destinationLabel: Boolean(els.destinationLabel),
           destinationWrapper: Boolean(els.destinationWrapper),
+          destinationAddress: Boolean(els.destinationAddress),
+          destinationMap: Boolean(els.destinationMap),
           iconWrapper: Boolean(els.iconWrapper),
+          icon: Boolean(els.icon),
           submit: Boolean(els.submit)
         }
       };
     }
 
+    function handleResize() {
+      if (!routeState.isLoaded) return;
+
+      if (routeState.isExpanded) {
+        applyExpandedState();
+      } else {
+        applyCollapsedState(true);
+      }
+    }
+
     function init() {
       captureTemplateClasses();
+      hideDestinationDetails(true);
+      setDestinationPointerEvents();
+
+      window.addEventListener("resize", handleResize);
 
       window.TwilinerBookingWidgetDebug = Object.assign(
         window.TwilinerBookingWidgetDebug || {},
@@ -3894,8 +2961,14 @@
           destinationRouteState: routeState,
           destinationRouteElements: els,
           getDestinationRouteStatus,
+          expandDestinationRoute: applyExpandedState,
+          collapseDestinationRoute: function () {
+            routeState.hasUserSelectedOrigin = true;
+            applyCollapsedState(false);
+          },
           reloadDestinationRouteData: function () {
             routeState.isLoaded = false;
+            routeState.hasUserSelectedOrigin = false;
             return loadDestinationRouteData();
           }
         }
