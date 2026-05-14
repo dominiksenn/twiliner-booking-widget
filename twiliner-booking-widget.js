@@ -2129,17 +2129,18 @@
 
 /* ==========================================================================
    Twiliner Destination Route Selector
-   v29 / D8 Clean State-Based Layout + Calm Reveal Motion
+   v30 / D9 City Station Data + Softer Motion
    - Laedt Destination + moegliche Abfahrtsorte via API
    - Rendert Origin-Items dynamisch
+   - Liest Bahnhofdaten aus versteckter CMS City Data List
+   - Befuellt Origin- und Destination-Links mit Bahnhofname + Maps URL
    - Nutzt State-Klassen statt manueller rechter Hoehen-/Transform-Logik
-   - Keine JS-height-animation der Liste
-   - Ruhigere Motion ueber Opacity/Transform + CSS-State
    - Kein translateY fuer Icon/Destination
    - Klick auf selected Origin oeffnet Liste wieder
    - Klick auf Address-/Map-Link oeffnet nicht die Liste
    - Hover-State nur auf Origin-Name, nicht beim Hover ueber Address-Link
    - Mobile: frueherer Scroll-Trigger
+   - Motion-Tuning: weichere Reveal-/Collapse-Bewegung
    ========================================================================== */
 
 (function () {
@@ -2154,8 +2155,8 @@
       selectedTextColor: "#46288c",
       hoverTextColor: "#eb8096",
       breakpointMobile: 767,
-      itemTransitionMs: 720,
-      detailTransitionMs: 620,
+      itemTransitionMs: 860,
+      detailTransitionMs: 760,
       desktopObserverThreshold: 0.68,
       mobileObserverThreshold: 0.34
     };
@@ -2204,6 +2205,8 @@
 
       allDeparturePlaces: [],
       availableOrigins: [],
+
+      cityDataByApiId: new Map(),
 
       isLoading: false,
       isLoaded: false,
@@ -2399,6 +2402,87 @@
       });
     }
 
+    function readCityData() {
+      routeState.cityDataByApiId.clear();
+
+      document.querySelectorAll('[data-booking-city-item="true"]').forEach(function (item) {
+        const apiId = (item.getAttribute("data-booking-city-api-id") || "").trim();
+        const stationNameEl = item.querySelector('[data-booking-city-station-name="true"]');
+        const mapUrlEl = item.querySelector('[data-booking-city-map-url="true"]');
+
+        const stationName = stationNameEl ? stationNameEl.textContent.trim() : "";
+        const mapUrl = mapUrlEl ? (mapUrlEl.getAttribute("href") || "").trim() : "";
+
+        if (!apiId) return;
+
+        routeState.cityDataByApiId.set(apiId, {
+          apiId: apiId,
+          stationName: stationName,
+          mapUrl: mapUrl && mapUrl !== "#" ? mapUrl : ""
+        });
+      });
+    }
+
+    function getCityData(apiId) {
+      if (!apiId) return null;
+      return routeState.cityDataByApiId.get(apiId) || null;
+    }
+
+    function applyStationLinkToElements(elements, cityData) {
+      const detailEls = uniqueElements(elements);
+
+      detailEls.forEach(function (el) {
+        if (!el) return;
+
+        const stationName = cityData && cityData.stationName ? cityData.stationName : "";
+        const mapUrl = cityData && cityData.mapUrl ? cityData.mapUrl : "";
+
+        el.textContent = stationName;
+
+        if (el.tagName === "A") {
+          el.setAttribute("href", mapUrl || "#");
+
+          if (mapUrl) {
+            el.setAttribute("target", "_blank");
+            el.setAttribute("rel", "noopener noreferrer");
+            el.setAttribute("aria-label", stationName || "Google Maps");
+          } else {
+            el.removeAttribute("target");
+            el.removeAttribute("rel");
+            el.removeAttribute("aria-label");
+          }
+        }
+
+        el.classList.toggle("has-city-data", Boolean(stationName || mapUrl));
+      });
+    }
+
+    function applyCityDataToOriginItem(item, place) {
+      if (!item || !place) return;
+
+      const cityData = getCityData(place.apiId);
+
+      const detailEls = uniqueElements([
+        item.querySelector('[data-booking-destination-origin-address="true"]'),
+        item.querySelector('[data-booking-destination-origin-map="true"]')
+      ]);
+
+      applyStationLinkToElements(detailEls, cityData);
+    }
+
+    function applyCityDataToDestination() {
+      if (!routeState.currentDestination) return;
+
+      const cityData = getCityData(routeState.currentDestination.apiId);
+
+      const detailEls = uniqueElements([
+        els.destinationAddress,
+        els.destinationMap
+      ]);
+
+      applyStationLinkToElements(detailEls, cityData);
+    }
+
     function resetInlineStyles() {
       const elementsToClean = uniqueElements([
         els.originList,
@@ -2506,7 +2590,7 @@
           display: block;
           overflow: hidden;
           opacity: 0;
-          transform: translateY(-0.45rem);
+          transform: translateY(-0.28rem);
           max-height: 0;
           pointer-events: none;
           transition:
@@ -2517,7 +2601,7 @@
 
         [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"]:not(.is-selected) {
           opacity: 0;
-          transform: translateY(-0.75rem);
+          transform: translateY(-0.38rem);
           max-height: 0;
           pointer-events: none;
         }
@@ -2541,44 +2625,44 @@
         }
 
         [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(2) {
-          transition-delay: 55ms;
+          transition-delay: 45ms;
         }
 
         [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(3) {
-          transition-delay: 110ms;
+          transition-delay: 90ms;
         }
 
         [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(4) {
-          transition-delay: 165ms;
+          transition-delay: 135ms;
         }
 
         [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(5) {
-          transition-delay: 220ms;
+          transition-delay: 180ms;
         }
 
         [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(6) {
-          transition-delay: 275ms;
+          transition-delay: 225ms;
         }
 
         [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(7) {
-          transition-delay: 330ms;
+          transition-delay: 270ms;
         }
 
         [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(8) {
-          transition-delay: 385ms;
+          transition-delay: 315ms;
         }
 
         [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(9) {
-          transition-delay: 440ms;
+          transition-delay: 360ms;
         }
 
-        [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected .cascading-address,
-        [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-target-wrapper="true"] .cascading-address {
+        [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected .cascading-address.has-city-data,
+        [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-target-wrapper="true"] .cascading-address.has-city-data {
           opacity: 1;
           transform: translateY(0);
           max-height: 8rem;
           pointer-events: auto;
-          transition-delay: 260ms;
+          transition-delay: 320ms;
         }
 
         [data-booking-destination-route="true"] .cascader-wrapper.is-expanded .cascading-address {
@@ -2610,9 +2694,9 @@
             max-height: 40rem;
           }
 
-          [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected .cascading-address,
-          [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-target-wrapper="true"] .cascading-address {
-            transition-delay: 180ms;
+          [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected .cascading-address.has-city-data,
+          [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-target-wrapper="true"] .cascading-address.has-city-data {
+            transition-delay: 220ms;
           }
         }
       `;
@@ -2652,7 +2736,15 @@
       nameEl.className = "cascading-text";
       nameEl.setAttribute("data-booking-destination-origin-name", "true");
 
+      const addressEl = document.createElement("a");
+      addressEl.className = "cascading-address";
+      addressEl.setAttribute("data-booking-destination-origin-address", "true");
+      addressEl.setAttribute("data-booking-destination-origin-map", "true");
+      addressEl.setAttribute("href", "#");
+
       item.appendChild(nameEl);
+      item.appendChild(addressEl);
+
       return item;
     }
 
@@ -2686,6 +2778,8 @@
           item.classList.remove("is-name-hover");
         });
       }
+
+      applyCityDataToOriginItem(item, place);
 
       mapEls.forEach(function (mapEl) {
         mapEl.addEventListener("mouseenter", function () {
@@ -2862,9 +2956,11 @@
           );
         }
 
+        readCityData();
         await loadAvailableOriginsForCurrentDestination();
 
         setDestinationLabel();
+        applyCityDataToDestination();
         renderOriginList();
 
         routeState.isLoaded = true;
@@ -2914,12 +3010,24 @@
     }
 
     function getDestinationRouteStatus() {
+      const selectedOriginCityData = routeState.selectedOrigin
+        ? getCityData(routeState.selectedOrigin.apiId)
+        : null;
+
+      const currentDestinationCityData = routeState.currentDestination
+        ? getCityData(routeState.currentDestination.apiId)
+        : null;
+
       return {
         language: routeState.language,
         currentDestinationApiId: routeState.currentDestinationApiId,
 
         currentDestination: routeState.currentDestination,
         selectedOrigin: routeState.selectedOrigin,
+
+        selectedOriginCityData: selectedOriginCityData,
+        currentDestinationCityData: currentDestinationCityData,
+        cityDataCount: routeState.cityDataByApiId.size,
 
         allDeparturePlacesCount: routeState.allDeparturePlaces.length,
         availableOriginsCount: routeState.availableOrigins.length,
@@ -2930,7 +3038,8 @@
             apiId: place.apiId,
             value: place.value,
             turnitLabel: place.turnitLabel,
-            turnitCityName: place.turnitCityName
+            turnitCityName: place.turnitCityName,
+            cityData: getCityData(place.apiId)
           };
         }),
 
