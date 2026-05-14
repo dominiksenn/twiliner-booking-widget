@@ -2129,7 +2129,7 @@
 
 /* ==========================================================================
    Twiliner Destination Route Selector
-   v32 / D11 City Station Data + Modal Prefill + Date Field Visual Sync
+   v33 / D12 City Station Data + Modal Prefill + Panel Cleanup
    - Laedt Destination + moegliche Abfahrtsorte via API
    - Rendert Origin-Items dynamisch
    - Liest Bahnhofdaten aus versteckter CMS City Data List
@@ -2143,9 +2143,11 @@
      - ohne bewusst gewaehlten Origin: Modal leer
      - mit bewusst gewaehltem Origin: Modal mit Origin + Destination
    - Modal Date Fields:
-     - leer: beide Datumfelder disabled
-     - Origin + Destination: Abfahrt aktiv, Rueckfahrt disabled
-     - Rueckfahrt aktiv erst nach gewaehlter Hinfahrt
+     - keine eigene Date-Field-Visual-Logik mehr
+     - normales Booking Modal steuert Fehler, Klickbarkeit und Feldstatus selbst
+   - Modal Panels:
+     - offene Dropdowns/Kalender werden defensiv geschlossen
+     - verhindert haengende unsichtbare Overlays bei schnellem Klicken
    - Dummy-Inhalte bleiben verborgen, bis echte Daten geladen sind
    - Motion-Tuning: langsamere und weichere Reveal-/Collapse-Bewegung
    ========================================================================== */
@@ -2162,8 +2164,6 @@
       selectedTextColor: "#46288c",
       hoverTextColor: "#eb8096",
       placeholderColor: "",
-      disabledFieldOpacity: "0.46",
-      activeFieldOpacity: "1",
       breakpointMobile: 767,
       itemTransitionMs: 1080,
       detailTransitionMs: 940,
@@ -2685,20 +2685,6 @@
           pointer-events: auto;
         }
 
-        [data-booking-destination-route="true"] .tw-date-disabled {
-          opacity: ${CONFIG.disabledFieldOpacity} !important;
-          pointer-events: none !important;
-          cursor: default !important;
-          transition: opacity 220ms ease-in-out;
-        }
-
-        [data-booking-destination-route="true"] .tw-date-active {
-          opacity: ${CONFIG.activeFieldOpacity} !important;
-          pointer-events: auto !important;
-          cursor: pointer !important;
-          transition: opacity 220ms ease-in-out;
-        }
-
         @media screen and (min-width: 768px) {
           [data-booking-destination-route="true"] .cascading-text-item.is-name-hover [data-booking-destination-origin-name="true"] {
             color: var(--tw-destination-hover) !important;
@@ -2726,6 +2712,8 @@
     }
 
     function setRouteState(nextExpanded, nextHasSelection) {
+      closeModalPanels();
+
       routeState.isExpanded = Boolean(nextExpanded);
       routeState.hasUserSelectedOrigin = Boolean(nextHasSelection);
       setCascaderState();
@@ -2823,6 +2811,8 @@
         const clickedMap = event.target.closest('[data-booking-destination-origin-map="true"], [data-booking-destination-origin-address="true"]');
         if (clickedMap) return;
 
+        closeModalPanels();
+
         const clickedName = event.target.closest('[data-booking-destination-origin-name="true"]');
         const isSelected = routeState.selectedOrigin && routeState.selectedOrigin.apiId === place.apiId;
 
@@ -2840,6 +2830,7 @@
         if (event.key !== "Enter" && event.key !== " ") return;
 
         event.preventDefault();
+        closeModalPanels();
 
         const isSelected = routeState.selectedOrigin && routeState.selectedOrigin.apiId === place.apiId;
 
@@ -2919,41 +2910,31 @@
       return source;
     }
 
-    function setFieldVisualState(field, isActive) {
-      if (!field) return;
+    function closeElementPanel(el) {
+      if (!el) return;
 
-      field.classList.toggle("tw-date-active", Boolean(isActive));
-      field.classList.toggle("tw-date-disabled", !isActive);
-
-      field.style.pointerEvents = isActive ? "auto" : "none";
-      field.style.opacity = isActive ? CONFIG.activeFieldOpacity : CONFIG.disabledFieldOpacity;
-      field.style.cursor = isActive ? "pointer" : "default";
+      el.style.display = "none";
+      el.style.opacity = "0";
+      el.style.pointerEvents = "none";
     }
 
-    function syncModalDateFieldVisualState() {
+    function closeModalPanels() {
       const debug = window.TwilinerBookingWidgetDebug || {};
       const modalState = debug.state;
       const modalEls = debug.elements;
 
-      if (!modalState || !modalEls) return false;
-
-      const hasRoute = Boolean(modalState.selectedOrigin && modalState.selectedDestination);
-      const hasDepartureDate = Boolean(modalState.selectedDepartureDate);
-      const isRoundtrip = modalState.tripType === "roundtrip";
-
-      const departureActive = hasRoute;
-      const returnActive = Boolean(hasRoute && hasDepartureDate && isRoundtrip);
-
-      setFieldVisualState(modalEls.departureField, departureActive);
-      setFieldVisualState(modalEls.returnField, returnActive);
-
-      if (modalEls.departureLabel && !modalState.selectedDepartureDate) {
-        setModalLabel(modalEls.departureLabel, null);
+      if (modalState) {
+        modalState.openPanel = null;
       }
 
-      if (modalEls.returnLabel && !modalState.selectedReturnDate) {
-        setModalLabel(modalEls.returnLabel, null);
-      }
+      if (!modalEls) return false;
+
+      [
+        modalEls.originDropdown,
+        modalEls.destinationDropdown,
+        modalEls.departureOverlay,
+        modalEls.returnOverlay
+      ].forEach(closeElementPanel);
 
       return true;
     }
@@ -2964,6 +2945,8 @@
       const modalEls = debug.elements;
 
       if (!modalState || !modalEls) return false;
+
+      closeModalPanels();
 
       modalState.selectedOrigin = null;
       modalState.selectedDestination = null;
@@ -3003,7 +2986,7 @@
         }
       }
 
-      syncModalDateFieldVisualState();
+      closeModalPanels();
 
       return true;
     }
@@ -3018,6 +3001,7 @@
         return resetModalToEmpty();
       }
 
+      closeModalPanels();
       resetModalToEmpty();
 
       modalState.selectedOrigin = routeState.selectedOrigin;
@@ -3033,7 +3017,7 @@
 
       routeState.lastModalPrefillMode = "origin-destination";
 
-      syncModalDateFieldVisualState();
+      closeModalPanels();
 
       try {
         if (typeof debug.loadDestinationPlaces === "function") {
@@ -3047,10 +3031,10 @@
           await debug.loadDepartureDates();
         }
 
-        syncModalDateFieldVisualState();
+        closeModalPanels();
       } catch (error) {
         console.warn("Twiliner destination route modal prefill failed:", error);
-        syncModalDateFieldVisualState();
+        closeModalPanels();
       }
 
       return true;
@@ -3058,10 +3042,12 @@
 
     function handleSubmitClick(event) {
       event.preventDefault();
+      closeModalPanels();
 
       if (!routeState.hasUserSelectedOrigin) {
         routeState.lastModalPrefillMode = "empty";
         resetModalToEmpty();
+        closeModalPanels();
         return;
       }
 
@@ -3154,6 +3140,8 @@
           );
         }
 
+        closeModalPanels();
+
         readCityData();
         await loadAvailableOriginsForCurrentDestination();
 
@@ -3174,6 +3162,8 @@
         if (els.submit) {
           els.submit.addEventListener("click", handleSubmitClick);
         }
+
+        closeModalPanels();
       } catch (error) {
         console.error("Twiliner destination route error:", error);
         routeState.error = error;
@@ -3285,6 +3275,7 @@
 
     function init() {
       injectStateStyles();
+      closeModalPanels();
 
       window.TwilinerBookingWidgetDebug = Object.assign(
         window.TwilinerBookingWidgetDebug || {},
@@ -3300,11 +3291,12 @@
           },
           prefillModalFromDestinationRoute: prefillModalWithSelectedRoute,
           resetModalFromDestinationRoute: resetModalToEmpty,
-          syncModalDateFieldVisualState: syncModalDateFieldVisualState,
+          closeModalPanelsFromDestinationRoute: closeModalPanels,
           reloadDestinationRouteData: function () {
             routeState.isLoaded = false;
             routeState.isExpanded = false;
             routeState.hasUserSelectedOrigin = false;
+            closeModalPanels();
             return loadDestinationRouteData();
           }
         }
