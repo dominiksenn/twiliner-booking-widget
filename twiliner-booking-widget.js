@@ -2129,11 +2129,12 @@
 
 /* ==========================================================================
    Twiliner Destination Route Selector
-   v28 / D7 Clean State-Based Layout + Smoother Motion
+   v29 / D8 Clean State-Based Layout + Calm Reveal Motion
    - Laedt Destination + moegliche Abfahrtsorte via API
    - Rendert Origin-Items dynamisch
    - Nutzt State-Klassen statt manueller rechter Hoehen-/Transform-Logik
-   - Smoothere Motion ueber Listenhoehen-Animation + Opacity/Transform
+   - Keine JS-height-animation der Liste
+   - Ruhigere Motion ueber Opacity/Transform + CSS-State
    - Kein translateY fuer Icon/Destination
    - Klick auf selected Origin oeffnet Liste wieder
    - Klick auf Address-/Map-Link oeffnet nicht die Liste
@@ -2153,8 +2154,7 @@
       selectedTextColor: "#46288c",
       hoverTextColor: "#eb8096",
       breakpointMobile: 767,
-      listTransitionMs: 780,
-      itemTransitionMs: 680,
+      itemTransitionMs: 720,
       detailTransitionMs: 620,
       desktopObserverThreshold: 0.68,
       mobileObserverThreshold: 0.34
@@ -2169,21 +2169,16 @@
       zurich: "001",
       zuerich: "001",
       zurigo: "001",
-
       bern: "002",
       berne: "002",
-
       basel: "012",
-
       girona: "004",
       barcelona: "005",
       amsterdam: "006",
       rotterdam: "008",
-
       brussels: "009",
       brussel: "009",
       bruxelles: "009",
-
       luxembourg: "010",
       luxemburg: "010"
     };
@@ -2216,8 +2211,7 @@
       hasUserSelectedOrigin: false,
 
       error: null,
-      observer: null,
-      isAnimatingList: false
+      observer: null
     };
 
     const els = {
@@ -2246,7 +2240,6 @@
       if (htmlLang.startsWith("de")) return "de";
 
       const path = window.location.pathname.toLowerCase();
-
       if (path === "/en" || path.startsWith("/en/")) return "en";
 
       return "de";
@@ -2369,18 +2362,7 @@
         });
 
         if (!response.ok) {
-          let message = "HTTP " + response.status;
-
-          try {
-            const payload = await response.json();
-            if (payload && payload.message) {
-              message = payload.message + " (HTTP " + response.status + ")";
-            }
-          } catch (_) {
-            // Keep default HTTP message.
-          }
-
-          throw makeApiError(stage, message, urlString, response.status, null);
+          throw makeApiError(stage, "HTTP " + response.status, urlString, response.status, null);
         }
 
         return await response.json();
@@ -2503,17 +2485,15 @@
 
         [data-booking-destination-route="true"] .cascading-text-list {
           overflow: hidden;
-          height: auto;
-          transition: height ${CONFIG.listTransitionMs}ms var(--tw-route-ease-soft);
-          will-change: height;
         }
 
         [data-booking-destination-route="true"] .cascading-text-item {
-          overflow: visible;
+          overflow: hidden;
           transition:
             opacity ${CONFIG.itemTransitionMs}ms var(--tw-route-ease),
-            transform ${CONFIG.itemTransitionMs}ms var(--tw-route-ease);
-          will-change: opacity, transform;
+            transform ${CONFIG.itemTransitionMs}ms var(--tw-route-ease),
+            max-height ${CONFIG.itemTransitionMs}ms var(--tw-route-ease-soft);
+          will-change: opacity, transform, max-height;
         }
 
         [data-booking-destination-route="true"] .cascading-text-item [data-booking-destination-origin-name="true"],
@@ -2545,14 +2525,14 @@
         [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected {
           opacity: 1;
           transform: translateY(0);
-          max-height: none;
+          max-height: 24rem;
           pointer-events: auto;
         }
 
         [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"] {
           opacity: 1;
           transform: translateY(0);
-          max-height: none;
+          max-height: 24rem;
           pointer-events: auto;
         }
 
@@ -2609,10 +2589,7 @@
           pointer-events: none;
         }
 
-        [data-booking-destination-route="true"] [data-booking-destination-map-target="true"] {
-          pointer-events: auto;
-        }
-
+        [data-booking-destination-route="true"] [data-booking-destination-map-target="true"],
         [data-booking-destination-route="true"] [data-booking-destination-origin-map="true"] {
           pointer-events: auto;
         }
@@ -2630,6 +2607,7 @@
         @media screen and (max-width: 767px) {
           [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"] {
             transition-delay: 0ms;
+            max-height: 40rem;
           }
 
           [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected .cascading-address,
@@ -2642,70 +2620,18 @@
       document.head.appendChild(style);
     }
 
-    function getCurrentListHeight() {
-      if (!els.originList) return 0;
-      return els.originList.getBoundingClientRect().height;
+    function setRouteState(nextExpanded, nextHasSelection) {
+      routeState.isExpanded = Boolean(nextExpanded);
+      routeState.hasUserSelectedOrigin = Boolean(nextHasSelection);
+      setCascaderState();
     }
 
-    function getTargetListHeight(nextExpanded, nextHasSelection) {
-      if (!els.originList || !els.cascader) return 0;
-
-      const previousExpanded = els.cascader.classList.contains("is-expanded");
-      const previousHasSelection = els.cascader.classList.contains("has-selection");
-
-      els.cascader.classList.toggle("is-expanded", nextExpanded);
-      els.cascader.classList.toggle("has-selection", nextHasSelection);
-
-      els.originList.style.height = "auto";
-
-      const height = els.originList.scrollHeight;
-
-      els.cascader.classList.toggle("is-expanded", previousExpanded);
-      els.cascader.classList.toggle("has-selection", previousHasSelection);
-
-      return height;
-    }
-
-    function animateListToState(nextExpanded, nextHasSelection) {
-      if (!els.originList || !els.cascader) {
-        routeState.isExpanded = nextExpanded;
-        routeState.hasUserSelectedOrigin = nextHasSelection;
-        setCascaderState(false);
-        return;
-      }
-
-      const startHeight = getCurrentListHeight();
-      const endHeight = getTargetListHeight(nextExpanded, nextHasSelection);
-
-      routeState.isExpanded = nextExpanded;
-      routeState.hasUserSelectedOrigin = nextHasSelection;
-
-      els.originList.style.height = startHeight + "px";
-      els.originList.offsetHeight;
-
-      setCascaderState(false);
-
-      window.requestAnimationFrame(function () {
-        routeState.isAnimatingList = true;
-        els.originList.style.height = endHeight + "px";
-
-        window.setTimeout(function () {
-          routeState.isAnimatingList = false;
-          els.originList.style.height = "auto";
-        }, CONFIG.listTransitionMs + 40);
-      });
-    }
-
-    function setCascaderState(resetHeight) {
+    function setCascaderState() {
       if (!els.cascader) return;
 
       els.cascader.classList.toggle("is-expanded", routeState.isExpanded);
       els.cascader.classList.toggle("has-selection", routeState.hasUserSelectedOrigin);
       els.cascader.classList.toggle("is-loaded", routeState.isLoaded);
-
-      if (resetHeight && els.originList) {
-        els.originList.style.height = "auto";
-      }
     }
 
     function setDestinationLabel() {
@@ -2786,13 +2712,13 @@
         const isSelected = routeState.selectedOrigin && routeState.selectedOrigin.apiId === place.apiId;
 
         if (isSelected && !routeState.isExpanded && clickedName) {
-          animateListToState(true, false);
+          setRouteState(true, false);
           return;
         }
 
         routeState.selectedOrigin = place;
         updateSelectedOriginVisual();
-        animateListToState(false, true);
+        setRouteState(false, true);
       });
 
       item.addEventListener("keydown", function (event) {
@@ -2803,13 +2729,13 @@
         const isSelected = routeState.selectedOrigin && routeState.selectedOrigin.apiId === place.apiId;
 
         if (isSelected && !routeState.isExpanded) {
-          animateListToState(true, false);
+          setRouteState(true, false);
           return;
         }
 
         routeState.selectedOrigin = place;
         updateSelectedOriginVisual();
-        animateListToState(false, true);
+        setRouteState(false, true);
       });
 
       return item;
@@ -2827,7 +2753,7 @@
       updateSelectedOriginVisual();
 
       window.requestAnimationFrame(function () {
-        setCascaderState(true);
+        setCascaderState();
       });
     }
 
@@ -2946,7 +2872,7 @@
         routeState.hasUserSelectedOrigin = false;
 
         resetInlineStyles();
-        setCascaderState(true);
+        setCascaderState();
         updateSelectedOriginVisual();
         initObserver();
       } catch (error) {
@@ -2976,7 +2902,7 @@
           if (routeState.hasUserSelectedOrigin) return;
           if (routeState.isExpanded) return;
 
-          animateListToState(true, false);
+          setRouteState(true, false);
         });
       }, {
         root: null,
@@ -3012,7 +2938,6 @@
         isLoaded: routeState.isLoaded,
         isExpanded: routeState.isExpanded,
         hasUserSelectedOrigin: routeState.hasUserSelectedOrigin,
-        isAnimatingList: routeState.isAnimatingList,
 
         error: routeState.error,
 
@@ -3042,10 +2967,10 @@
           destinationRouteElements: els,
           getDestinationRouteStatus,
           expandDestinationRoute: function () {
-            animateListToState(true, false);
+            setRouteState(true, false);
           },
           collapseDestinationRoute: function () {
-            animateListToState(false, true);
+            setRouteState(false, true);
           },
           reloadDestinationRouteData: function () {
             routeState.isLoaded = false;
