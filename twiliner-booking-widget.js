@@ -3360,3 +3360,556 @@
     initTwilinerNoBookableDatesGuard();
   }
 })();
+
+
+
+
+
+/* ==========================================================================
+   Twiliner Destination Route Selector
+   v23 / D2: Destination Page Route Data + Origin List Render
+   - Liest aktuelle Destination API ID aus dem CMS-Attribut
+   - Lädt alle möglichen Abfahrtsorte via API
+   - Prüft pro Abfahrtsort, ob die aktuelle Destination angefahren wird
+   - Rendert die möglichen Abfahrtsorte in die Origin-Liste
+   - Setzt den ersten verfügbaren Abfahrtsort als Default
+   - Setzt das Destination-Label aus API-Daten
+   - Stellt Debug-Funktion getDestinationRouteStatus() bereit
+   ========================================================================== */
+
+(function () {
+  function initTwilinerDestinationRouteSelector() {
+    const root = document.querySelector('[data-booking-destination-route="true"]');
+    if (!root) return;
+
+    const CONFIG = {
+      apiBaseUrl: "https://data.nightride.com/api",
+      operatorId: "a0cf1341-a01b-449d-b91f-17a1b4f84c44",
+      apiTimeoutMs: 10000,
+      selectedTextColor: "#46288c"
+    };
+
+    const API_LANGUAGE_MAP = {
+      de: "de",
+      en: "en"
+    };
+
+    const LEGACY_CITY_CODE_MAP = {
+      zurich: "001",
+      zuerich: "001",
+      zurigo: "001",
+
+      bern: "002",
+      berne: "002",
+
+      basel: "012",
+
+      girona: "004",
+      barcelona: "005",
+      amsterdam: "006",
+      rotterdam: "008",
+
+      brussels: "009",
+      brussel: "009",
+      bruxelles: "009",
+
+      luxembourg: "010",
+      luxemburg: "010"
+    };
+
+    const TURNIT_CITY_NAME_BY_LEGACY_CODE = {
+      "001": "Zurich",
+      "002": "Bern",
+      "012": "Basel",
+      "004": "Girona",
+      "005": "Barcelona",
+      "006": "Amsterdam",
+      "008": "Rotterdam",
+      "009": "Brussels",
+      "010": "Luxembourg"
+    };
+
+    const routeState = {
+      language: getCurrentLanguage(),
+      currentDestinationApiId: (root.getAttribute("data-booking-current-destination-api-id") || "").trim(),
+
+      currentDestination: null,
+      selectedOrigin: null,
+
+      allDeparturePlaces: [],
+      availableOrigins: [],
+
+      isLoading: false,
+      isLoaded: false,
+
+      error: null,
+
+      templateClasses: {
+        item: null,
+        name: null,
+        address: null,
+        map: null
+      }
+    };
+
+    const els = {
+      originList: root.querySelector('[data-booking-destination-origin-list="true"]'),
+      originTemplate: root.querySelector('[data-booking-destination-origin-template="true"]'),
+
+      destinationWrapper: root.querySelector('[data-booking-destination-target-wrapper="true"]'),
+      destinationLabel: root.querySelector('[data-booking-destination-label-target="true"]'),
+      destinationAddress: root.querySelector('[data-booking-destination-address-target="true"]'),
+      destinationMap: root.querySelector('[data-booking-destination-map-target="true"]'),
+
+      iconWrapper: root.querySelector('[data-booking-destination-icon-wrapper="true"]'),
+      icon: root.querySelector('[data-booking-destination-icon="true"]'),
+
+      submit: root.querySelector('[data-booking-destination-submit="true"]')
+    };
+
+    const templateClone = els.originTemplate ? els.originTemplate.cloneNode(true) : null;
+
+    function getCurrentLanguage() {
+      const htmlLang = (document.documentElement.getAttribute("lang") || "").toLowerCase();
+
+      if (htmlLang.startsWith("en")) return "en";
+      if (htmlLang.startsWith("de")) return "de";
+
+      const path = window.location.pathname.toLowerCase();
+
+      if (path === "/en" || path.startsWith("/en/")) return "en";
+
+      return "de";
+    }
+
+    function normalizeLookupKey(input) {
+      return String(input || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+    }
+
+    function stripTrailingCountryCode(label) {
+      return String(label || "").replace(/\s*\([A-Z]{2}\)\s*$/, "");
+    }
+
+    function getLegacyCodeForPlace(place, cleanedLabel) {
+      const lookupKeys = [
+        normalizeLookupKey(cleanedLabel),
+        normalizeLookupKey(place.label),
+        normalizeLookupKey(place.name),
+        normalizeLookupKey(place.name_de),
+        normalizeLookupKey(place.name_en),
+        normalizeLookupKey(place.name_fr),
+        normalizeLookupKey(place.key)
+      ].filter(Boolean);
+
+      for (let i = 0; i < lookupKeys.length; i += 1) {
+        if (LEGACY_CITY_CODE_MAP[lookupKeys[i]]) {
+          return LEGACY_CITY_CODE_MAP[lookupKeys[i]];
+        }
+      }
+
+      return null;
+    }
+
+    function getTurnitCityName(place, cleanedLabel, legacyCode) {
+      if (legacyCode && TURNIT_CITY_NAME_BY_LEGACY_CODE[legacyCode]) {
+        return TURNIT_CITY_NAME_BY_LEGACY_CODE[legacyCode];
+      }
+
+      return (
+        place.name_en ||
+        place.key ||
+        place.name ||
+        cleanedLabel ||
+        place.label ||
+        ""
+      );
+    }
+
+    function mapPlace(place) {
+      const cleanedLabel = stripTrailingCountryCode(place.label);
+      const legacyCode = getLegacyCodeForPlace(place, cleanedLabel);
+      const turnitCityName = getTurnitCityName(place, cleanedLabel, legacyCode);
+
+      return {
+        value: legacyCode || place.id,
+        apiId: place.id,
+        label: cleanedLabel || place.label || place.name || "",
+        cityName: place.name || cleanedLabel || place.label || "",
+        turnitLabel: turnitCityName,
+        turnitCityName: turnitCityName,
+        raw: place
+      };
+    }
+
+    function sortPlacesAlphabetically(places) {
+      return places.slice().sort(function (a, b) {
+        return String(a.label || "").localeCompare(String(b.label || ""), routeState.language, {
+          sensitivity: "base"
+        });
+      });
+    }
+
+    function makeApiError(stage, message, url, status, originalError) {
+      return {
+        stage: stage || "unknown",
+        message: message || "Unknown API error",
+        url: url || null,
+        status: status || null,
+        timestamp: new Date().toISOString(),
+        originalErrorName: originalError && originalError.name ? originalError.name : null
+      };
+    }
+
+    async function apiGet(path, query, stage) {
+      const url = new URL(
+        CONFIG.apiBaseUrl.replace(/\/$/, "") + "/" + path.replace(/^\//, "")
+      );
+
+      Object.keys(query || {}).forEach(function (key) {
+        const value = query[key];
+
+        if (value !== null && value !== undefined && value !== "") {
+          url.searchParams.set(key, value);
+        }
+      });
+
+      const urlString = url.toString();
+
+      const controller = new AbortController();
+      const timeout = window.setTimeout(function () {
+        controller.abort();
+      }, CONFIG.apiTimeoutMs);
+
+      try {
+        const response = await fetch(urlString, {
+          method: "GET",
+          headers: {
+            Accept: "application/json"
+          },
+          signal: controller.signal
+        });
+
+        if (!response.ok) {
+          let message = "HTTP " + response.status;
+
+          try {
+            const payload = await response.json();
+            if (payload && payload.message) {
+              message = payload.message + " (HTTP " + response.status + ")";
+            }
+          } catch (_) {
+            // Keep default HTTP message.
+          }
+
+          throw makeApiError(stage, message, urlString, response.status, null);
+        }
+
+        return await response.json();
+      } catch (error) {
+        if (error && error.stage && error.message && error.url) {
+          throw error;
+        }
+
+        if (error && error.name === "AbortError") {
+          throw makeApiError(
+            stage,
+            "API timeout after " + (CONFIG.apiTimeoutMs / 1000) + "s",
+            urlString,
+            null,
+            error
+          );
+        }
+
+        throw makeApiError(
+          stage,
+          error && error.message ? error.message : "Network/API error",
+          urlString,
+          null,
+          error
+        );
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    }
+
+    function captureTemplateClasses() {
+      if (!templateClone) return;
+
+      const nameEl = templateClone.querySelector('[data-booking-destination-origin-name="true"]');
+      const addressEl = templateClone.querySelector('[data-booking-destination-origin-address="true"]');
+      const mapEl = templateClone.querySelector('[data-booking-destination-origin-map="true"]');
+
+      routeState.templateClasses.item = templateClone.className || "cascading-text-item";
+      routeState.templateClasses.name = nameEl?.className || "cascading-text";
+      routeState.templateClasses.address = addressEl?.className || "cascading-address";
+      routeState.templateClasses.map = mapEl?.className || "cascading-address";
+    }
+
+    function setDestinationLabel() {
+      if (!els.destinationLabel || !routeState.currentDestination) return;
+
+      els.destinationLabel.textContent = routeState.currentDestination.label;
+      els.destinationLabel.style.color = CONFIG.selectedTextColor;
+    }
+
+    function clearGeneratedOriginList() {
+      if (!els.originList) return;
+      els.originList.innerHTML = "";
+    }
+
+    function createOriginItem(place, index) {
+      let item;
+
+      if (templateClone) {
+        item = templateClone.cloneNode(true);
+      } else {
+        item = document.createElement("div");
+        item.className = routeState.templateClasses.item || "cascading-text-item";
+
+        const nameEl = document.createElement("div");
+        nameEl.className = routeState.templateClasses.name || "cascading-text";
+        nameEl.setAttribute("data-booking-destination-origin-name", "true");
+        item.appendChild(nameEl);
+      }
+
+      item.removeAttribute("data-booking-destination-origin-template");
+      item.setAttribute("data-booking-destination-origin-rendered", "true");
+      item.setAttribute("data-booking-destination-origin-api-id", place.apiId);
+      item.setAttribute("data-booking-destination-origin-index", String(index));
+      item.setAttribute("role", "button");
+      item.setAttribute("tabindex", "0");
+
+      const nameEl = item.querySelector('[data-booking-destination-origin-name="true"]');
+      const addressEl = item.querySelector('[data-booking-destination-origin-address="true"]');
+      const mapEl = item.querySelector('[data-booking-destination-origin-map="true"]');
+
+      if (nameEl) {
+        nameEl.textContent = place.label;
+        nameEl.style.color = CONFIG.selectedTextColor;
+      }
+
+      if (addressEl) {
+        addressEl.textContent = "";
+        addressEl.style.display = "none";
+      }
+
+      if (mapEl) {
+        mapEl.setAttribute("href", "#");
+        mapEl.style.display = "none";
+      }
+
+      item.addEventListener("click", function (event) {
+        event.preventDefault();
+        selectOrigin(place);
+      });
+
+      item.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectOrigin(place);
+        }
+      });
+
+      return item;
+    }
+
+    function renderOriginList() {
+      if (!els.originList) return;
+
+      clearGeneratedOriginList();
+
+      routeState.availableOrigins.forEach(function (place, index) {
+        const item = createOriginItem(place, index);
+        els.originList.appendChild(item);
+      });
+
+      updateSelectedOriginVisual();
+    }
+
+    function updateSelectedOriginVisual() {
+      if (!els.originList || !routeState.selectedOrigin) return;
+
+      Array.from(els.originList.querySelectorAll('[data-booking-destination-origin-rendered="true"]')).forEach(function (item) {
+        const isSelected = item.getAttribute("data-booking-destination-origin-api-id") === routeState.selectedOrigin.apiId;
+
+        item.classList.toggle("is-selected", isSelected);
+        item.setAttribute("aria-selected", isSelected ? "true" : "false");
+      });
+    }
+
+    function selectOrigin(place) {
+      routeState.selectedOrigin = place;
+      updateSelectedOriginVisual();
+    }
+
+    function isArrivalAvailableForDestination(arrivalPayload) {
+      if (!Array.isArray(arrivalPayload)) return false;
+
+      return arrivalPayload.some(function (place) {
+        return place && place.id === routeState.currentDestinationApiId;
+      });
+    }
+
+    async function loadAvailableOriginsForCurrentDestination() {
+      const apiLanguage = API_LANGUAGE_MAP[routeState.language] || "de";
+
+      const departuresPayload = await apiGet("get-places", {
+        type: "departure",
+        language: apiLanguage,
+        operator_id: CONFIG.operatorId
+      }, "destination-route-departure-places");
+
+      const allDepartures = Array.isArray(departuresPayload)
+        ? departuresPayload.map(mapPlace).filter(function (place) {
+            return Boolean(place.label && place.apiId);
+          })
+        : [];
+
+      routeState.allDeparturePlaces = sortPlacesAlphabetically(allDepartures);
+
+      routeState.currentDestination = routeState.allDeparturePlaces.find(function (place) {
+        return place.apiId === routeState.currentDestinationApiId;
+      }) || null;
+
+      if (!routeState.currentDestination) {
+        throw makeApiError(
+          "destination-route-current-destination",
+          "Current destination API ID was not found in API places.",
+          null,
+          null,
+          null
+        );
+      }
+
+      const results = await Promise.all(
+        routeState.allDeparturePlaces.map(async function (departurePlace) {
+          if (departurePlace.apiId === routeState.currentDestinationApiId) {
+            return null;
+          }
+
+          try {
+            const arrivalPayload = await apiGet("get-places", {
+              type: "arrival",
+              language: apiLanguage,
+              operator_id: CONFIG.operatorId,
+              place_departure_id: departurePlace.apiId
+            }, "destination-route-arrival-check");
+
+            return isArrivalAvailableForDestination(arrivalPayload) ? departurePlace : null;
+          } catch (error) {
+            console.warn("Twiliner destination route arrival check failed:", {
+              departurePlace,
+              error
+            });
+
+            return null;
+          }
+        })
+      );
+
+      routeState.availableOrigins = sortPlacesAlphabetically(results.filter(Boolean));
+      routeState.selectedOrigin = routeState.availableOrigins[0] || null;
+    }
+
+    async function loadDestinationRouteData() {
+      if (routeState.isLoading || routeState.isLoaded) return;
+
+      routeState.isLoading = true;
+      routeState.error = null;
+
+      try {
+        if (!routeState.currentDestinationApiId) {
+          throw makeApiError(
+            "destination-route-missing-api-id",
+            "Missing CMS Booking API Place ID.",
+            null,
+            null,
+            null
+          );
+        }
+
+        await loadAvailableOriginsForCurrentDestination();
+
+        setDestinationLabel();
+        renderOriginList();
+
+        routeState.isLoaded = true;
+      } catch (error) {
+        console.error("Twiliner destination route error:", error);
+        routeState.error = error;
+      } finally {
+        routeState.isLoading = false;
+      }
+    }
+
+    function getDestinationRouteStatus() {
+      return {
+        language: routeState.language,
+        currentDestinationApiId: routeState.currentDestinationApiId,
+
+        currentDestination: routeState.currentDestination,
+        selectedOrigin: routeState.selectedOrigin,
+
+        allDeparturePlacesCount: routeState.allDeparturePlaces.length,
+        availableOriginsCount: routeState.availableOrigins.length,
+
+        availableOrigins: routeState.availableOrigins.map(function (place) {
+          return {
+            label: place.label,
+            apiId: place.apiId,
+            value: place.value,
+            turnitLabel: place.turnitLabel,
+            turnitCityName: place.turnitCityName
+          };
+        }),
+
+        isLoading: routeState.isLoading,
+        isLoaded: routeState.isLoaded,
+
+        error: routeState.error,
+
+        elements: {
+          root: Boolean(root),
+          originList: Boolean(els.originList),
+          originTemplate: Boolean(els.originTemplate),
+          destinationLabel: Boolean(els.destinationLabel),
+          destinationWrapper: Boolean(els.destinationWrapper),
+          iconWrapper: Boolean(els.iconWrapper),
+          submit: Boolean(els.submit)
+        }
+      };
+    }
+
+    function init() {
+      captureTemplateClasses();
+
+      window.TwilinerBookingWidgetDebug = Object.assign(
+        window.TwilinerBookingWidgetDebug || {},
+        {
+          destinationRouteState: routeState,
+          destinationRouteElements: els,
+          getDestinationRouteStatus,
+          reloadDestinationRouteData: function () {
+            routeState.isLoaded = false;
+            return loadDestinationRouteData();
+          }
+        }
+      );
+
+      loadDestinationRouteData();
+    }
+
+    init();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initTwilinerDestinationRouteSelector);
+  } else {
+    initTwilinerDestinationRouteSelector();
+  }
+})();
