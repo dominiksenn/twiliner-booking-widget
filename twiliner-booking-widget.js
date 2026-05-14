@@ -2480,97 +2480,144 @@
       const style = document.createElement("style");
       style.id = "twiliner-destination-route-state-styles";
 
-      style.textContent = `
-        [data-booking-destination-route="true"] .cascader-wrapper {
-          --tw-destination-primary: ${CONFIG.selectedTextColor};
-          --tw-destination-hover: ${CONFIG.hoverTextColor};
-        }
+style.textContent = `
+  [data-booking-destination-route="true"] .cascader-wrapper {
+    --tw-destination-primary: ${CONFIG.selectedTextColor};
+    --tw-destination-hover: ${CONFIG.hoverTextColor};
+    --tw-route-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --tw-route-ease-soft: cubic-bezier(0.16, 1, 0.3, 1);
+  }
 
-        [data-booking-destination-route="true"] .cascading-text-list {
-          overflow: hidden;
-        }
+  [data-booking-destination-route="true"] .cascading-text-list {
+    overflow: hidden;
+  }
 
-        [data-booking-destination-route="true"] .cascading-text-item {
-          transition:
-            opacity 520ms ease-in-out,
-            transform 520ms ease-in-out,
-            max-height 680ms ease-in-out;
-          overflow: hidden;
-        }
+  [data-booking-destination-route="true"] .cascading-text-item {
+    transition:
+      opacity 720ms var(--tw-route-ease),
+      transform 820ms var(--tw-route-ease),
+      max-height 920ms var(--tw-route-ease-soft);
+    overflow: hidden;
+  }
 
-        [data-booking-destination-route="true"] .cascading-text-item [data-booking-destination-origin-name="true"],
-        [data-booking-destination-route="true"] [data-booking-destination-label-target="true"] {
-          color: var(--tw-destination-primary);
-          transition: color 220ms ease-in-out;
-        }
+  [data-booking-destination-route="true"] .cascading-text-item [data-booking-destination-origin-name="true"],
+  [data-booking-destination-route="true"] [data-booking-destination-label-target="true"] {
+    color: var(--tw-destination-primary);
+    transition: color 260ms ease-in-out;
+  }
 
-        [data-booking-destination-route="true"] .cascading-address {
-          display: block;
-          overflow: hidden;
-          opacity: 0;
-          transform: translateY(-0.35rem);
-          max-height: 0;
-          pointer-events: none;
-          transition:
-            opacity 360ms ease-in-out,
-            transform 360ms ease-in-out,
-            max-height 360ms ease-in-out;
-        }
+  [data-booking-destination-route="true"] .cascading-address {
+    display: block;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(-0.45rem);
+    max-height: 0;
+    pointer-events: none;
+    transition:
+      opacity 620ms var(--tw-route-ease),
+      transform 700ms var(--tw-route-ease),
+      max-height 760ms var(--tw-route-ease-soft);
+  }
 
-        [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"]:not(.is-selected) {
-          opacity: 0;
-          transform: translateY(-0.5rem);
-          max-height: 0;
-          pointer-events: none;
-        }
+  [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"]:not(.is-selected) {
+    opacity: 0;
+    transform: translateY(-0.8rem);
+    max-height: 0;
+    pointer-events: none;
+  }
 
-        [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected {
-          opacity: 1;
-          transform: translateY(0);
-          max-height: 20rem;
-          pointer-events: auto;
-        }
+  [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected {
+    opacity: 1;
+    transform: translateY(0);
+    max-height: 20rem;
+    pointer-events: auto;
+  }
 
-        [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"] {
-          opacity: 1;
-          transform: translateY(0);
-          max-height: 20rem;
-          pointer-events: auto;
-        }
+  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"] {
+    opacity: 1;
+    transform: translateY(0);
+    max-height: 20rem;
+    pointer-events: auto;
+  }
 
-        [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected .cascading-address,
-        [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-target-wrapper="true"] .cascading-address {
-          opacity: 1;
-          transform: translateY(0);
-          max-height: 8rem;
-          pointer-events: auto;
-        }
+  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(1) {
+    transition-delay: 0ms;
+  }
 
-        [data-booking-destination-route="true"] [data-booking-destination-target-wrapper="true"] {
-          pointer-events: none;
-        }
+  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(2) {
+    transition-delay: 55ms;
+  }
 
-        [data-booking-destination-route="true"] [data-booking-destination-map-target="true"] {
-          pointer-events: auto;
-        }
+  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(3) {
+    transition-delay: 110ms;
+  }
 
-        @media screen and (min-width: 768px) {
-          [data-booking-destination-route="true"] .cascading-text-item:hover [data-booking-destination-origin-name="true"] {
-            color: var(--tw-destination-hover) !important;
-          }
+  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(4) {
+    transition-delay: 165ms;
+  }
 
-          [data-booking-destination-route="true"] [data-booking-destination-target-wrapper="true"] .cascading-text-item:hover [data-booking-destination-label-target="true"] {
-            color: var(--tw-destination-primary) !important;
-          }
-        }
+  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(5) {
+    transition-delay: 220ms;
+  }
 
-        @media screen and (max-width: 767px) {
-          [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"],
-          [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected {
-            max-height: 40rem;
-          }
-        }
-      `;
+  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(6) {
+    transition-delay: 275ms;
+  }
+
+  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(7) {
+    transition-delay: 330ms;
+  }
+
+  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(8) {
+    transition-delay: 385ms;
+  }
+
+  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"]:nth-child(9) {
+    transition-delay: 440ms;
+  }
+
+  [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected .cascading-address,
+  [data-booking-destination-route="true"] .cascader-wrapper.has-selection:not(.is-expanded) [data-booking-destination-target-wrapper="true"] .cascading-address {
+    opacity: 1;
+    transform: translateY(0);
+    max-height: 8rem;
+    pointer-events: auto;
+    transition-delay: 260ms;
+  }
+
+  [data-booking-destination-route="true"] .cascader-wrapper.is-expanded .cascading-address {
+    transition-delay: 0ms;
+  }
+
+  [data-booking-destination-route="true"] [data-booking-destination-target-wrapper="true"] {
+    pointer-events: none;
+  }
+
+  [data-booking-destination-route="true"] [data-booking-destination-map-target="true"] {
+    pointer-events: auto;
+  }
+
+  @media screen and (min-width: 768px) {
+    [data-booking-destination-route="true"] .cascading-text-item:hover [data-booking-destination-origin-name="true"] {
+      color: var(--tw-destination-hover) !important;
+    }
+
+    [data-booking-destination-route="true"] [data-booking-destination-target-wrapper="true"] .cascading-text-item:hover [data-booking-destination-label-target="true"] {
+      color: var(--tw-destination-primary) !important;
+    }
+  }
+
+  @media screen and (max-width: 767px) {
+    [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"],
+    [data-booking-destination-route="true"] .cascader-wrapper:not(.is-expanded) [data-booking-destination-origin-rendered="true"].is-selected {
+      max-height: 40rem;
+    }
+
+    [data-booking-destination-route="true"] .cascader-wrapper.is-expanded [data-booking-destination-origin-rendered="true"] {
+      transition-delay: 0ms;
+    }
+  }
+`;
 
       document.head.appendChild(style);
     }
