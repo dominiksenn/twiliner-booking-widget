@@ -2129,21 +2129,22 @@
 
 /* ==========================================================================
    Twiliner Destination Route Selector
-   v25 / D4: Smooth Expand/Collapse Refinements
+   v26 / D5 Clean: Responsive Layout + Smooth Expand/Collapse
    - Liest aktuelle Destination API ID aus dem CMS-Attribut
-   - Lädt alle möglichen Abfahrtsorte via API
-   - Prüft pro Abfahrtsort, ob die aktuelle Destination angefahren wird
-   - Rendert die möglichen Abfahrtsorte in die Origin-Liste
-   - Setzt den ersten verfügbaren Abfahrtsort als Default
+   - Laedt alle moeglichen Abfahrtsorte via API
+   - Prueft pro Abfahrtsort, ob die aktuelle Destination angefahren wird
+   - Rendert die moeglichen Abfahrtsorte in die Origin-Liste
+   - Setzt den ersten verfuegbaren Abfahrtsort als Default
    - Initial nur ein Abfahrtsort sichtbar
-   - Expanded per IntersectionObserver, später ausgelöst
+   - Expanded per IntersectionObserver, spaeter ausgelöst
    - Click auf Origin collapsed die Liste smooth
-   - Click auf sichtbaren selected Origin öffnet die Liste wieder
-   - Destination-Wrapper bleibt oben/unten ausgerichtet
-   - Nur Destination-Target-Item und Icon werden vertikal zentriert
+   - Click auf sichtbaren selected Origin oeffnet die Liste wieder
+   - Desktop: rechte Linien folgen dynamisch der linken Listenhoehe
+   - Desktop: Destination-Text und Icon werden dynamisch zentriert
+   - Mobile: keine Hoehen-Synchronisierung, Liste klappt natuerlich auf
    - Origin- und Destination-Details erscheinen nach Auswahl
    - Desktop-Hover auf Origins: #eb8096
-   - Icon wird nie überschrieben, nur der Wrapper bewegt
+   - Icon wird nie ueberschrieben
    ========================================================================== */
 
 (function () {
@@ -2158,11 +2159,12 @@
       selectedTextColor: "#46288c",
       hoverTextColor: "#eb8096",
       breakpointMobile: 767,
-      listTransitionMs: 650,
+      listTransitionMs: 680,
       itemTransitionMs: 520,
+      detailTransitionMs: 360,
       itemStaggerMs: 70,
-      targetTransitionMs: 650,
-      observerThreshold: 0.62
+      targetTransitionMs: 680,
+      observerThreshold: 0.68
     };
 
     const API_LANGUAGE_MAP = {
@@ -2221,15 +2223,13 @@
       hasUserSelectedOrigin: false,
 
       error: null,
+      observer: null,
 
       templateClasses: {
         item: null,
         name: null,
-        address: null,
-        map: null
-      },
-
-      observer: null
+        address: null
+      }
     };
 
     const els = {
@@ -2249,6 +2249,9 @@
     };
 
     els.originWrapper = els.originList ? els.originList.closest(".cascading-text-wrapper") : null;
+    els.destinationPositioner = els.destinationTargetItem
+      ? els.destinationTargetItem.closest(".cascading-text-positioner")
+      : null;
 
     const templateClone = els.originTemplate ? els.originTemplate.cloneNode(true) : null;
 
@@ -2420,21 +2423,39 @@
       }
     }
 
+    function isMobile() {
+      return window.matchMedia("(max-width: " + CONFIG.breakpointMobile + "px)").matches;
+    }
+
+    function uniqueElements(elements) {
+      return elements.filter(Boolean).filter(function (el, index, array) {
+        return array.indexOf(el) === index;
+      });
+    }
+
+    function hasUsefulHref(el) {
+      if (!el || !el.getAttribute) return false;
+
+      const href = el.getAttribute("href") || "";
+      return Boolean(href && href !== "#");
+    }
+
+    function hasVisibleContent(el) {
+      if (!el) return false;
+
+      const text = el.textContent ? el.textContent.trim() : "";
+      return Boolean(text || hasUsefulHref(el));
+    }
+
     function captureTemplateClasses() {
       if (!templateClone) return;
 
       const nameEl = templateClone.querySelector('[data-booking-destination-origin-name="true"]');
-      const addressEl = templateClone.querySelector('[data-booking-destination-origin-address="true"]');
-      const mapEl = templateClone.querySelector('[data-booking-destination-origin-map="true"]');
+      const addressEl = templateClone.querySelector('[data-booking-destination-origin-address="true"], [data-booking-destination-origin-map="true"]');
 
       routeState.templateClasses.item = templateClone.className || "cascading-text-item";
       routeState.templateClasses.name = nameEl?.className || "cascading-text";
       routeState.templateClasses.address = addressEl?.className || "cascading-address";
-      routeState.templateClasses.map = mapEl?.className || "cascading-address";
-    }
-
-    function isMobile() {
-      return window.matchMedia("(max-width: " + CONFIG.breakpointMobile + "px)").matches;
     }
 
     function setDestinationLabel() {
@@ -2453,27 +2474,38 @@
         els.destinationTargetItem.style.pointerEvents = "none";
       }
 
-      if (els.destinationMap) {
-        els.destinationMap.style.pointerEvents = "auto";
-      }
+      uniqueElements([els.destinationAddress, els.destinationMap]).forEach(function (el) {
+        el.style.pointerEvents = "auto";
+      });
     }
 
-    function hasUsefulMapHref(el) {
-      if (!el) return false;
-
-      const href = el.getAttribute("href") || "";
-      return href && href !== "#";
+    function clearGeneratedOriginList() {
+      if (!els.originList) return;
+      els.originList.innerHTML = "";
     }
 
-    function hideDestinationDetails(instant) {
-      [els.destinationAddress, els.destinationMap].forEach(function (el) {
+    function getOriginDetailElements(item) {
+      if (!item) return [];
+
+      return uniqueElements([
+        item.querySelector('[data-booking-destination-origin-address="true"]'),
+        item.querySelector('[data-booking-destination-origin-map="true"]')
+      ]);
+    }
+
+    function getDestinationDetailElements() {
+      return uniqueElements([els.destinationAddress, els.destinationMap]);
+    }
+
+    function hideDetailElements(elements, instant) {
+      uniqueElements(elements).forEach(function (el) {
         if (!el) return;
 
         el.style.display = "";
         el.style.overflow = "hidden";
         el.style.transition = instant
           ? "none"
-          : "opacity 320ms ease-in-out, transform 320ms ease-in-out, max-height 320ms ease-in-out";
+          : "opacity " + CONFIG.detailTransitionMs + "ms ease-in-out, transform " + CONFIG.detailTransitionMs + "ms ease-in-out, max-height " + CONFIG.detailTransitionMs + "ms ease-in-out";
 
         el.style.opacity = "0";
         el.style.transform = "translateY(-0.35rem)";
@@ -2482,47 +2514,53 @@
       });
     }
 
-    function showDestinationDetails() {
-      [els.destinationAddress, els.destinationMap].forEach(function (el) {
-        if (!el) return;
-
-        const hasText = Boolean(el.textContent.trim());
-        const hasHref = hasUsefulMapHref(el);
-
-        if (!hasText && !hasHref) return;
+    function showDetailElements(elements) {
+      uniqueElements(elements).forEach(function (el) {
+        if (!el || !hasVisibleContent(el)) return;
 
         el.style.display = "";
         el.style.overflow = "hidden";
-        el.style.transition = "opacity 360ms ease-in-out, transform 360ms ease-in-out, max-height 360ms ease-in-out";
+        el.style.transition =
+          "opacity " + CONFIG.detailTransitionMs + "ms ease-in-out, " +
+          "transform " + CONFIG.detailTransitionMs + "ms ease-in-out, " +
+          "max-height " + CONFIG.detailTransitionMs + "ms ease-in-out";
+
         el.style.maxHeight = el.scrollHeight + "px";
         el.style.opacity = "1";
         el.style.transform = "translateY(0)";
+        el.style.pointerEvents = "auto";
       });
-
-      if (els.destinationMap) {
-        els.destinationMap.style.pointerEvents = "auto";
-      }
     }
 
-    function clearGeneratedOriginList() {
-      if (!els.originList) return;
-      els.originList.innerHTML = "";
+    function hideAllOriginDetails(instant) {
+      getRenderedOriginItems().forEach(function (item) {
+        hideDetailElements(getOriginDetailElements(item), instant);
+      });
+    }
+
+    function hideDestinationDetails(instant) {
+      hideDetailElements(getDestinationDetailElements(), instant);
+    }
+
+    function showDestinationDetails() {
+      showDetailElements(getDestinationDetailElements());
+      setDestinationPointerEvents();
+    }
+
+    function createFallbackOriginItem() {
+      const item = document.createElement("div");
+      item.className = routeState.templateClasses.item || "cascading-text-item";
+
+      const nameEl = document.createElement("div");
+      nameEl.className = routeState.templateClasses.name || "cascading-text";
+      nameEl.setAttribute("data-booking-destination-origin-name", "true");
+
+      item.appendChild(nameEl);
+      return item;
     }
 
     function createOriginItem(place, index) {
-      let item;
-
-      if (templateClone) {
-        item = templateClone.cloneNode(true);
-      } else {
-        item = document.createElement("div");
-        item.className = routeState.templateClasses.item || "cascading-text-item";
-
-        const nameEl = document.createElement("div");
-        nameEl.className = routeState.templateClasses.name || "cascading-text";
-        nameEl.setAttribute("data-booking-destination-origin-name", "true");
-        item.appendChild(nameEl);
-      }
+      const item = templateClone ? templateClone.cloneNode(true) : createFallbackOriginItem();
 
       item.removeAttribute("data-booking-destination-origin-template");
       item.setAttribute("data-booking-destination-origin-rendered", "true");
@@ -2539,8 +2577,7 @@
         "max-height " + CONFIG.listTransitionMs + "ms ease-in-out";
 
       const nameEl = item.querySelector('[data-booking-destination-origin-name="true"]');
-      const addressEl = item.querySelector('[data-booking-destination-origin-address="true"]');
-      const mapEl = item.querySelector('[data-booking-destination-origin-map="true"]');
+      const detailEls = getOriginDetailElements(item);
 
       if (nameEl) {
         nameEl.textContent = place.label;
@@ -2548,17 +2585,7 @@
         nameEl.style.transition = "color 220ms ease-in-out";
       }
 
-      [addressEl, mapEl].forEach(function (el) {
-        if (!el) return;
-
-        el.style.display = "";
-        el.style.overflow = "hidden";
-        el.style.opacity = "0";
-        el.style.transform = "translateY(-0.35rem)";
-        el.style.maxHeight = "0px";
-        el.style.pointerEvents = "none";
-        el.style.transition = "opacity 320ms ease-in-out, transform 320ms ease-in-out, max-height 320ms ease-in-out";
-      });
+      hideDetailElements(detailEls, true);
 
       item.addEventListener("mouseenter", function () {
         if (isMobile()) return;
@@ -2579,10 +2606,7 @@
         const isSelected = routeState.selectedOrigin && routeState.selectedOrigin.apiId === place.apiId;
 
         if (isSelected && !routeState.isExpanded && routeState.hasUserSelectedOrigin) {
-          routeState.hasUserSelectedOrigin = false;
-          hideOriginDetails(item, false);
-          hideDestinationDetails(false);
-          applyExpandedState();
+          openFromSelectedCollapsed(item);
           return;
         }
 
@@ -2597,10 +2621,7 @@
         const isSelected = routeState.selectedOrigin && routeState.selectedOrigin.apiId === place.apiId;
 
         if (isSelected && !routeState.isExpanded && routeState.hasUserSelectedOrigin) {
-          routeState.hasUserSelectedOrigin = false;
-          hideOriginDetails(item, false);
-          hideDestinationDetails(false);
-          applyExpandedState();
+          openFromSelectedCollapsed(item);
           return;
         }
 
@@ -2616,13 +2637,19 @@
       clearGeneratedOriginList();
 
       routeState.availableOrigins.forEach(function (place, index) {
-        const item = createOriginItem(place, index);
-        els.originList.appendChild(item);
+        els.originList.appendChild(createOriginItem(place, index));
       });
 
       prepareOriginList();
       updateSelectedOriginVisual();
-      applyCollapsedState(true);
+
+      window.requestAnimationFrame(function () {
+        applyCollapsedState(true);
+
+        window.setTimeout(function () {
+          applyCollapsedState(true);
+        }, 120);
+      });
     }
 
     function getRenderedOriginItems() {
@@ -2660,165 +2687,152 @@
       });
     }
 
-    function getExpandedListHeight() {
+    function naturalItemHeight(item) {
+      if (!item) return 0;
+
+      const previousMaxHeight = item.style.maxHeight;
+      item.style.maxHeight = "none";
+
+      const height = item.scrollHeight;
+
+      item.style.maxHeight = previousMaxHeight;
+      return height;
+    }
+
+    function selectedItemHeight() {
+      const selectedItem = getSelectedOriginItem();
+      return selectedItem ? naturalItemHeight(selectedItem) : 0;
+    }
+
+    function expandedListHeight() {
       if (!els.originList) return 0;
 
       const items = getRenderedOriginItems();
+      const previousListMaxHeight = els.originList.style.maxHeight;
 
-      return items.reduce(function (sum, item) {
-        return sum + item.scrollHeight;
-      }, 0);
+      els.originList.style.maxHeight = "none";
+      items.forEach(function (item) {
+        item.style.maxHeight = "none";
+      });
+
+      const height = els.originList.scrollHeight;
+
+      els.originList.style.maxHeight = previousListMaxHeight;
+
+      return height;
     }
 
-    function getCollapsedListHeight() {
-      const selectedItem = getSelectedOriginItem();
-      return selectedItem ? selectedItem.scrollHeight : 0;
+    function resetDesktopRightLayout() {
+      if (els.destinationPositioner) {
+        els.destinationPositioner.style.transition = "min-height " + CONFIG.targetTransitionMs + "ms ease-in-out";
+        els.destinationPositioner.style.minHeight = "";
+        els.destinationPositioner.style.display = "";
+        els.destinationPositioner.style.alignItems = "";
+      }
+
+      if (els.destinationTargetItem) {
+        els.destinationTargetItem.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
+        els.destinationTargetItem.style.transform = "translateY(0px)";
+      }
+
+      if (els.iconWrapper) {
+        els.iconWrapper.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
+        els.iconWrapper.style.transform = "translateY(0px)";
+      }
     }
 
-    function getTargetDeltaForExpanded() {
-      if (isMobile()) return 0;
-
-      const expandedHeight = getExpandedListHeight();
-      const collapsedHeight = getCollapsedListHeight();
-
-      return Math.max(0, (expandedHeight - collapsedHeight) / 2);
-    }
-
-    function setRightColumnHeightForExpanded() {
-      if (!els.destinationWrapper) return;
-
+    function applyDesktopRightLayoutForExpanded() {
       if (isMobile()) {
-        els.destinationWrapper.style.minHeight = "";
+        resetDesktopRightLayout();
         return;
       }
 
-      if (els.originWrapper) {
-        els.destinationWrapper.style.transition = "min-height " + CONFIG.targetTransitionMs + "ms ease-in-out";
-        els.destinationWrapper.style.minHeight = els.originWrapper.scrollHeight + "px";
+      const listHeight = expandedListHeight();
+      if (!listHeight) return;
+
+      if (els.destinationPositioner) {
+        els.destinationPositioner.style.transition = "min-height " + CONFIG.targetTransitionMs + "ms ease-in-out";
+        els.destinationPositioner.style.minHeight = listHeight + "px";
+        els.destinationPositioner.style.display = "flex";
+        els.destinationPositioner.style.alignItems = "center";
+      }
+
+      if (els.destinationTargetItem) {
+        els.destinationTargetItem.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
+        els.destinationTargetItem.style.transform = "translateY(0px)";
+      }
+
+      if (els.iconWrapper) {
+        const iconHeight = els.iconWrapper.offsetHeight || els.iconWrapper.scrollHeight || 0;
+        const collapsedHeight = selectedItemHeight();
+        const delta = Math.max(0, (listHeight - collapsedHeight) / 2);
+
+        els.iconWrapper.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
+        els.iconWrapper.style.transform = "translateY(" + delta + "px)";
       }
     }
 
-    function resetRightColumnHeight() {
-      if (!els.destinationWrapper) return;
-
-      els.destinationWrapper.style.transition = "min-height " + CONFIG.targetTransitionMs + "ms ease-in-out";
-      els.destinationWrapper.style.minHeight = "";
-    }
-
-    function setTargetTransformForExpanded() {
-      if (isMobile()) {
-        resetTargetTransform();
-        return;
-      }
-
-      const delta = getTargetDeltaForExpanded();
-
-      [els.iconWrapper, els.destinationTargetItem].forEach(function (el) {
-        if (!el) return;
-
-        el.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
-        el.style.transform = "translateY(" + delta + "px)";
-        el.style.willChange = "transform";
-      });
-    }
-
-    function resetTargetTransform() {
-      [els.iconWrapper, els.destinationTargetItem].forEach(function (el) {
-        if (!el) return;
-
-        el.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
-        el.style.transform = "translateY(0px)";
-      });
-    }
-
-    function hideOriginDetails(item, instant) {
-      if (!item) return;
-
-      const addressEl = item.querySelector('[data-booking-destination-origin-address="true"]');
-      const mapEl = item.querySelector('[data-booking-destination-origin-map="true"]');
-
-      [addressEl, mapEl].forEach(function (el) {
-        if (!el) return;
-
-        el.style.transition = instant
-          ? "none"
-          : "opacity 320ms ease-in-out, transform 320ms ease-in-out, max-height 320ms ease-in-out";
-
-        el.style.opacity = "0";
-        el.style.transform = "translateY(-0.35rem)";
-        el.style.maxHeight = "0px";
-        el.style.pointerEvents = "none";
-      });
-    }
-
-    function showOriginDetails(item) {
-      if (!item) return;
-
-      const addressEl = item.querySelector('[data-booking-destination-origin-address="true"]');
-      const mapEl = item.querySelector('[data-booking-destination-origin-map="true"]');
-
-      [addressEl, mapEl].forEach(function (el) {
-        if (!el) return;
-
-        const hasText = Boolean(el.textContent.trim());
-        const hasHref = hasUsefulMapHref(el);
-
-        if (!hasText && !hasHref) return;
-
-        el.style.transition = "opacity 360ms ease-in-out, transform 360ms ease-in-out, max-height 360ms ease-in-out";
-        el.style.maxHeight = el.scrollHeight + "px";
-        el.style.opacity = "1";
-        el.style.transform = "translateY(0)";
-        el.style.pointerEvents = "auto";
-      });
-    }
-
-    function hideAllOriginDetails(instant) {
-      getRenderedOriginItems().forEach(function (item) {
-        hideOriginDetails(item, instant);
-      });
-    }
-
-    function applyCollapsedState(instant) {
-      routeState.isExpanded = false;
-
+    function setItemsForCollapsed(selectedItem, instant) {
       const items = getRenderedOriginItems();
-      const selectedItem = getSelectedOriginItem();
-
-      if (!els.originList || !selectedItem) return;
-
-      hideAllOriginDetails(instant);
-      hideDestinationDetails(instant);
-      resetTargetTransform();
-      resetRightColumnHeight();
 
       items.forEach(function (item) {
         const isSelected = item === selectedItem;
+        const targetHeight = isSelected ? naturalItemHeight(item) : 0;
 
         item.style.transition = instant
           ? "none"
           : "opacity " + CONFIG.itemTransitionMs + "ms ease-in-out, transform " + CONFIG.itemTransitionMs + "ms ease-in-out, max-height " + CONFIG.listTransitionMs + "ms ease-in-out";
 
         item.style.transitionDelay = "0ms";
-        item.style.maxHeight = isSelected ? item.scrollHeight + "px" : "0px";
+        item.style.maxHeight = targetHeight + "px";
         item.style.opacity = isSelected ? "1" : "0";
         item.style.transform = isSelected ? "translateY(0)" : "translateY(-0.5rem)";
         item.style.pointerEvents = isSelected ? "auto" : "none";
       });
+    }
 
-      els.originList.style.maxHeight = selectedItem.scrollHeight + "px";
+    function setItemsForExpanded() {
+      const items = getRenderedOriginItems();
+
+      items.forEach(function (item, index) {
+        item.style.transition =
+          "opacity " + CONFIG.itemTransitionMs + "ms ease-in-out, " +
+          "transform " + CONFIG.itemTransitionMs + "ms ease-in-out, " +
+          "max-height " + CONFIG.listTransitionMs + "ms ease-in-out";
+
+        item.style.transitionDelay = (index * CONFIG.itemStaggerMs) + "ms";
+
+        if (isMobile()) {
+          item.style.maxHeight = "none";
+        } else {
+          item.style.maxHeight = naturalItemHeight(item) + "px";
+        }
+
+        item.style.opacity = "1";
+        item.style.transform = "translateY(0)";
+        item.style.pointerEvents = "auto";
+      });
+    }
+
+    function applyCollapsedState(instant) {
+      routeState.isExpanded = false;
+
+      const selectedItem = getSelectedOriginItem();
+      if (!els.originList || !selectedItem) return;
+
+      hideAllOriginDetails(instant);
+      hideDestinationDetails(instant);
+      resetDesktopRightLayout();
+
+      setItemsForCollapsed(selectedItem, instant);
+
+      const collapsedHeight = naturalItemHeight(selectedItem);
+      els.originList.style.maxHeight = collapsedHeight + "px";
 
       if (routeState.hasUserSelectedOrigin && !instant) {
         window.setTimeout(function () {
-          const latestSelected = getSelectedOriginItem();
-
-          showOriginDetails(latestSelected);
-          showDestinationDetails();
-
-          if (latestSelected && els.originList) {
-            els.originList.style.maxHeight = latestSelected.scrollHeight + "px";
-          }
-        }, CONFIG.listTransitionMs * 0.72);
+          revealSelectedDetails();
+        }, CONFIG.listTransitionMs * 0.7);
       }
     }
 
@@ -2831,27 +2845,47 @@
       hideAllOriginDetails(false);
       hideDestinationDetails(false);
 
-      const expandedHeight = getExpandedListHeight();
-      els.originList.style.maxHeight = expandedHeight + "px";
-
-      setRightColumnHeightForExpanded();
-
-      items.forEach(function (item, index) {
-        item.style.transition =
-          "opacity " + CONFIG.itemTransitionMs + "ms ease-in-out, " +
-          "transform " + CONFIG.itemTransitionMs + "ms ease-in-out, " +
-          "max-height " + CONFIG.listTransitionMs + "ms ease-in-out";
-
-        item.style.transitionDelay = (index * CONFIG.itemStaggerMs) + "ms";
-        item.style.maxHeight = item.scrollHeight + "px";
-        item.style.opacity = "1";
-        item.style.transform = "translateY(0)";
-        item.style.pointerEvents = "auto";
-      });
+      setItemsForExpanded();
 
       window.requestAnimationFrame(function () {
-        setTargetTransformForExpanded();
+        const targetHeight = expandedListHeight();
+        els.originList.style.maxHeight = targetHeight + "px";
+        applyDesktopRightLayoutForExpanded();
+
+        window.setTimeout(function () {
+          const refreshedHeight = expandedListHeight();
+          els.originList.style.maxHeight = refreshedHeight + "px";
+          applyDesktopRightLayoutForExpanded();
+        }, 120);
       });
+    }
+
+    function revealSelectedDetails() {
+      const selectedItem = getSelectedOriginItem();
+      if (!selectedItem || !els.originList) return;
+
+      showDetailElements(getOriginDetailElements(selectedItem));
+      showDestinationDetails();
+
+      window.requestAnimationFrame(function () {
+        window.requestAnimationFrame(function () {
+          const fullHeight = naturalItemHeight(selectedItem);
+
+          selectedItem.style.maxHeight = fullHeight + "px";
+          els.originList.style.maxHeight = fullHeight + "px";
+        });
+      });
+    }
+
+    function openFromSelectedCollapsed(item) {
+      hideDetailElements(getOriginDetailElements(item), false);
+      hideDestinationDetails(false);
+
+      routeState.hasUserSelectedOrigin = false;
+
+      window.setTimeout(function () {
+        applyExpandedState();
+      }, 80);
     }
 
     function selectOrigin(place, collapseAfterSelection) {
@@ -2982,11 +3016,25 @@
         });
       }, {
         root: null,
-        rootMargin: "0px 0px -18% 0px",
+        rootMargin: "0px 0px -24% 0px",
         threshold: [0, 0.25, 0.45, CONFIG.observerThreshold, 0.85, 1]
       });
 
       routeState.observer.observe(root);
+    }
+
+    function handleResize() {
+      if (!routeState.isLoaded) return;
+
+      if (routeState.isExpanded) {
+        applyExpandedState();
+      } else {
+        applyCollapsedState(true);
+
+        if (routeState.hasUserSelectedOrigin) {
+          window.setTimeout(revealSelectedDetails, 80);
+        }
+      }
     }
 
     function getDestinationRouteStatus() {
@@ -3024,6 +3072,7 @@
           destinationLabel: Boolean(els.destinationLabel),
           destinationWrapper: Boolean(els.destinationWrapper),
           destinationTargetItem: Boolean(els.destinationTargetItem),
+          destinationPositioner: Boolean(els.destinationPositioner),
           destinationAddress: Boolean(els.destinationAddress),
           destinationMap: Boolean(els.destinationMap),
           iconWrapper: Boolean(els.iconWrapper),
@@ -3031,16 +3080,6 @@
           submit: Boolean(els.submit)
         }
       };
-    }
-
-    function handleResize() {
-      if (!routeState.isLoaded) return;
-
-      if (routeState.isExpanded) {
-        applyExpandedState();
-      } else {
-        applyCollapsedState(true);
-      }
     }
 
     function init() {
@@ -3079,233 +3118,5 @@
     document.addEventListener("DOMContentLoaded", initTwilinerDestinationRouteSelector);
   } else {
     initTwilinerDestinationRouteSelector();
-  }
-})();
-
-
-
-
-/* ==========================================================================
-   Twiliner Destination Route Selector Refinements
-   v26 / D5: Right Line Alignment + Selected Origin Details Height Fix
-   - Gibt dem rechten Destination-Positioner im Expanded-Zustand echte Höhe
-   - Zentriert nur Destination-Target-Item und Icon, nicht den ganzen Wrapper
-   - Rechnet nach Origin-Auswahl die Höhe des selected Origin Items neu
-   - Macht Origin-Adresse/Map nach Auswahl sichtbar
-   ========================================================================== */
-
-(function () {
-  function initTwilinerDestinationRouteRefinements() {
-    const CONFIG = {
-      breakpointMobile: 767,
-      targetTransitionMs: 650,
-      detailsTransitionMs: 360,
-      syncIntervalMs: 250
-    };
-
-    function getDebug() {
-      return window.TwilinerBookingWidgetDebug || null;
-    }
-
-    function getState() {
-      const debug = getDebug();
-      return debug && debug.destinationRouteState ? debug.destinationRouteState : null;
-    }
-
-    function getElements() {
-      const debug = getDebug();
-      return debug && debug.destinationRouteElements ? debug.destinationRouteElements : null;
-    }
-
-    function isMobile() {
-      return window.matchMedia("(max-width: " + CONFIG.breakpointMobile + "px)").matches;
-    }
-
-    function getRenderedOriginItems(elements) {
-      if (!elements || !elements.originList) return [];
-
-      return Array.from(
-        elements.originList.querySelectorAll('[data-booking-destination-origin-rendered="true"]')
-      );
-    }
-
-    function getSelectedOriginItem(state, elements) {
-      if (!state || !state.selectedOrigin || !elements || !elements.originList) return null;
-
-      return getRenderedOriginItems(elements).find(function (item) {
-        return item.getAttribute("data-booking-destination-origin-api-id") === state.selectedOrigin.apiId;
-      }) || null;
-    }
-
-    function getExpandedOriginHeight(elements) {
-      return getRenderedOriginItems(elements).reduce(function (sum, item) {
-        return sum + item.scrollHeight;
-      }, 0);
-    }
-
-    function hasVisibleContent(el) {
-      if (!el) return false;
-
-      const text = el.textContent ? el.textContent.trim() : "";
-      const href = el.getAttribute ? el.getAttribute("href") || "" : "";
-
-      return Boolean(text || (href && href !== "#"));
-    }
-
-    function getDestinationPositioner(elements) {
-      if (!elements || !elements.destinationTargetItem) return null;
-
-      return elements.destinationTargetItem.closest(".cascading-text-positioner");
-    }
-
-    function resetRightAlignment(elements) {
-      if (!elements) return;
-
-      const destinationPositioner = getDestinationPositioner(elements);
-
-      if (destinationPositioner) {
-        destinationPositioner.style.transition = "min-height " + CONFIG.targetTransitionMs + "ms ease-in-out";
-        destinationPositioner.style.minHeight = "";
-      }
-
-      [elements.destinationTargetItem, elements.iconWrapper].forEach(function (el) {
-        if (!el) return;
-
-        el.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
-        el.style.transform = "translateY(0px)";
-      });
-    }
-
-    function syncExpandedRightAlignment() {
-      const state = getState();
-      const elements = getElements();
-
-      if (!state || !elements || !state.isLoaded) return;
-
-      if (isMobile() || !state.isExpanded) {
-        resetRightAlignment(elements);
-        return;
-      }
-
-      const destinationPositioner = getDestinationPositioner(elements);
-      const expandedHeight = getExpandedOriginHeight(elements);
-
-      if (!destinationPositioner || !expandedHeight) return;
-
-      destinationPositioner.style.transition = "min-height " + CONFIG.targetTransitionMs + "ms ease-in-out";
-      destinationPositioner.style.minHeight = expandedHeight + "px";
-
-      if (elements.destinationTargetItem) {
-        const targetHeight = elements.destinationTargetItem.scrollHeight || elements.destinationTargetItem.offsetHeight || 0;
-        const destinationDelta = Math.max(0, (expandedHeight - targetHeight) / 2);
-
-        elements.destinationTargetItem.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
-        elements.destinationTargetItem.style.transform = "translateY(" + destinationDelta + "px)";
-      }
-
-      if (elements.iconWrapper) {
-        const iconHeight = elements.iconWrapper.scrollHeight || elements.iconWrapper.offsetHeight || 0;
-        const iconDelta = Math.max(0, (expandedHeight - iconHeight) / 2);
-
-        elements.iconWrapper.style.transition = "transform " + CONFIG.targetTransitionMs + "ms ease-in-out";
-        elements.iconWrapper.style.transform = "translateY(" + iconDelta + "px)";
-      }
-    }
-
-    function revealDetailElement(el) {
-      if (!el || !hasVisibleContent(el)) return;
-
-      el.style.display = "";
-      el.style.overflow = "hidden";
-      el.style.transition =
-        "opacity " + CONFIG.detailsTransitionMs + "ms ease-in-out, " +
-        "transform " + CONFIG.detailsTransitionMs + "ms ease-in-out, " +
-        "max-height " + CONFIG.detailsTransitionMs + "ms ease-in-out";
-
-      el.style.maxHeight = el.scrollHeight + "px";
-      el.style.opacity = "1";
-      el.style.transform = "translateY(0)";
-      el.style.pointerEvents = "auto";
-    }
-
-    function syncSelectedOriginDetails() {
-      const state = getState();
-      const elements = getElements();
-
-      if (!state || !elements || !state.isLoaded) return;
-      if (state.isExpanded) return;
-      if (!state.hasUserSelectedOrigin) return;
-
-      const selectedItem = getSelectedOriginItem(state, elements);
-      if (!selectedItem) return;
-
-      const addressEl = selectedItem.querySelector('[data-booking-destination-origin-address="true"]');
-      const mapEl = selectedItem.querySelector('[data-booking-destination-origin-map="true"]');
-
-      revealDetailElement(addressEl);
-      revealDetailElement(mapEl);
-
-      window.requestAnimationFrame(function () {
-        selectedItem.style.maxHeight = selectedItem.scrollHeight + "px";
-
-        if (elements.originList) {
-          elements.originList.style.maxHeight = selectedItem.scrollHeight + "px";
-        }
-      });
-    }
-
-    function syncDestinationMapPointerEvents() {
-      const elements = getElements();
-      if (!elements) return;
-
-      if (elements.destinationWrapper) {
-        elements.destinationWrapper.style.pointerEvents = "none";
-      }
-
-      if (elements.destinationTargetItem) {
-        elements.destinationTargetItem.style.pointerEvents = "none";
-      }
-
-      if (elements.destinationMap) {
-        elements.destinationMap.style.pointerEvents = "auto";
-      }
-    }
-
-    function syncAll() {
-      syncExpandedRightAlignment();
-      syncSelectedOriginDetails();
-      syncDestinationMapPointerEvents();
-    }
-
-    document.addEventListener("click", function () {
-      window.setTimeout(syncAll, 80);
-      window.setTimeout(syncAll, 450);
-      window.setTimeout(syncAll, 760);
-    }, true);
-
-    window.addEventListener("resize", function () {
-      window.setTimeout(syncAll, 80);
-      window.setTimeout(syncAll, 450);
-    });
-
-    const interval = window.setInterval(syncAll, CONFIG.syncIntervalMs);
-
-    window.TwilinerBookingWidgetDebug = Object.assign(
-      window.TwilinerBookingWidgetDebug || {},
-      {
-        syncDestinationRouteRefinements: syncAll,
-        stopDestinationRouteRefinements: function () {
-          window.clearInterval(interval);
-        }
-      }
-    );
-
-    syncAll();
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initTwilinerDestinationRouteRefinements);
-  } else {
-    initTwilinerDestinationRouteRefinements();
   }
 })();
