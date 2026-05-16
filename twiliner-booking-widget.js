@@ -1,9 +1,6 @@
 (function () {
   function initTwilinerBookingWidget() {
-    const widget =
-        document.querySelector('[data-booking-hero="true"]') ||
-        document.querySelector('[data-booking-widget="true"]');    
-    
+    const widget = document.querySelector('[data-booking-widget="true"]');
     if (!widget) return;
 
 /**
@@ -18,7 +15,7 @@
  * 8. Validierung Button
  * 9. Turnit Link
  * 10. URL Parameter & Fallback
-* v23: const widget changed */
+* v22: Persistent No Bookable Dates Message Add-on */
 
     const CONFIG = {
       apiBaseUrl: "https://data.nightride.com/api",
