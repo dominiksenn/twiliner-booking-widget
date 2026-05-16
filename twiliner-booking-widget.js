@@ -2,7 +2,9 @@
   function initTwilinerBookingWidget() {
     const widget =
         document.querySelector('[data-booking-hero="true"]') ||
-        document.querySelector('[data-booking-widget="true"]');    if (!widget) return;
+        document.querySelector('[data-booking-widget="true"]');    
+    
+    if (!widget) return;
 
 /**
  * Twiliner Booking Widget
